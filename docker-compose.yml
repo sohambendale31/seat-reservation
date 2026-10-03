@@ -1,0 +1,33 @@
+services:
+  postgres:
+    image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+    environment:
+      POSTGRES_DB: seatres
+      POSTGRES_USER: seatres
+      # Throwaway value, local network only.
+      POSTGRES_PASSWORD: seatres-local-only
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U seatres -d seatres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  app:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: local
+      DB_URL: jdbc:postgresql://postgres:5432/seatres
+      DB_USERNAME: seatres
+      DB_PASSWORD: seatres-local-only
+    ports: ["8080:8080"]
+    ulimits:
+      nofile: 65536                  # room for Tomcat's queued connections
+    stop_grace_period: 30s
+
+volumes:
+  pgdata:

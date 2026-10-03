@@ -1,0 +1,7 @@
+# Local Compose profile.
+app:
+  auth:
+    # DEV ONLY; refused under the prod profile.
+    jwt-secret: ${APP_AUTH_JWT_SECRET:local-dev-only-hs256-secret-change-me-0123456789}
+    # DEV ONLY; refused under the prod profile.
+    admin-key: ${APP_AUTH_ADMIN_KEY:local-dev-only-admin-key-change-me-0123456789}

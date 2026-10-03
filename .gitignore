@@ -1,1 +1,22 @@
+# Build output
+target/
+
+# Secrets and local config
+.env
+*.pem
+*.key
+
+# IDE / editor
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.project
+.classpath
+nbproject/
+*.swp
+
+# OS
 .DS_Store

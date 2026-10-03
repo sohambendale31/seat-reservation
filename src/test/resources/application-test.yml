@@ -1,0 +1,18 @@
+# Test profile. The DataSource comes from Testcontainers; only pool and app settings live here.
+# lock_timeout is deliberately short so tests can force a lock timeout quickly.
+spring:
+  datasource:
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:10}
+      connection-timeout: ${DB_POOL_CONNECTION_TIMEOUT_MS:60000}
+      connection-init-sql: >-
+        SET lock_timeout = '${DB_LOCK_TIMEOUT_MS:2000}ms';
+        SET statement_timeout = '${DB_STATEMENT_TIMEOUT_MS:35000}ms';
+        SET idle_in_transaction_session_timeout = '30000ms'
+
+app:
+  auth:
+    jwt-secret: test-only-hs256-secret-0123456789-abcdefghij
+    admin-key: test-only-admin-key-0123456789-abcdefghij
+  idempotency:
+    retention: PT24H
