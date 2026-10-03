@@ -50,10 +50,6 @@ public final class Api {
                 .POST(bodyOf(body)));
     }
 
-    public Response postWithoutContentType(String path, String bearerToken, String body) {
-        return send(request(path, bearerToken, Map.of()).POST(bodyOf(body)));
-    }
-
     private HttpRequest.Builder request(String path, String bearerToken,
             Map<String, String> headers) {
         HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(baseUrl + path))

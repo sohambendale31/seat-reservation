@@ -1,0 +1,67 @@
+package com.seatres.repository;
+
+import com.seatres.domain.SeatRow;
+import com.seatres.domain.SeatStatus;
+import java.util.List;
+import java.util.UUID;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.jdbc.core.namedparam.SqlParameterSource;
+import org.springframework.stereotype.Repository;
+
+@Repository
+public class SeatJdbcRepository {
+
+    private static final int INSERT_BATCH_SIZE = 1_000;
+
+    private static final String INSERT = """
+            INSERT INTO seats (show_id, label, price_paise)
+            VALUES (:showId, :label, :pricePaise)
+            """;
+
+    private static final String FIND_BY_SHOW = """
+            SELECT id, label, status, price_paise
+            FROM seats
+            WHERE show_id = :showId
+            ORDER BY id
+            """;
+
+    private final NamedParameterJdbcTemplate jdbc;
+
+    public SeatJdbcRepository(NamedParameterJdbcTemplate jdbc) {
+        this.jdbc = jdbc;
+    }
+
+    /** Inserts in layout order, so ascending id is layout order and the lock order. */
+    public void insertAll(UUID showId, List<NewSeat> seats) {
+        int inserted = 0;
+        for (int from = 0; from < seats.size(); from += INSERT_BATCH_SIZE) {
+            List<NewSeat> batch = seats.subList(from, Math.min(from + INSERT_BATCH_SIZE, seats.size()));
+            SqlParameterSource[] parameters = batch.stream()
+                    .map(seat -> (SqlParameterSource) new MapSqlParameterSource()
+                            .addValue("showId", showId)
+                            .addValue("label", seat.label())
+                            .addValue("pricePaise", seat.pricePaise()))
+                    .toArray(SqlParameterSource[]::new);
+            for (int rows : jdbc.batchUpdate(INSERT, parameters)) {
+                inserted += rows;
+            }
+        }
+        if (inserted != seats.size()) {
+            throw new IllegalStateException(
+                    "expected to insert " + seats.size() + " seats but inserted " + inserted);
+        }
+    }
+
+    /** One statement, so derived counts and the seat list always agree. */
+    public List<SeatRow> findByShow(UUID showId) {
+        return jdbc.query(FIND_BY_SHOW, new MapSqlParameterSource("showId", showId),
+                (rs, rowNum) -> new SeatRow(
+                        rs.getLong("id"),
+                        rs.getString("label"),
+                        SeatStatus.valueOf(rs.getString("status")),
+                        rs.getLong("price_paise")));
+    }
+
+    public record NewSeat(String label, long pricePaise) {}
+}

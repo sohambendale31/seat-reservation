@@ -1,0 +1,37 @@
+package com.seatres.web;
+
+import com.seatres.service.ShowService;
+import com.seatres.web.dto.CreateShowRequest;
+import com.seatres.web.dto.ShowDetailsResponse;
+import com.seatres.web.dto.ShowResponse;
+import jakarta.validation.Valid;
+import java.net.URI;
+import java.util.UUID;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+public class ShowController {
+
+    private final ShowService showService;
+
+    public ShowController(ShowService showService) {
+        this.showService = showService;
+    }
+
+    @PostMapping(path = "/shows", consumes = MediaType.APPLICATION_JSON_VALUE)
+    ResponseEntity<ShowResponse> create(@Valid @RequestBody CreateShowRequest request) {
+        ShowResponse show = showService.create(request);
+        return ResponseEntity.created(URI.create("/shows/" + show.id())).body(show);
+    }
+
+    @GetMapping("/shows/{showId}")
+    ShowDetailsResponse details(@PathVariable UUID showId) {
+        return showService.details(showId);
+    }
+}
