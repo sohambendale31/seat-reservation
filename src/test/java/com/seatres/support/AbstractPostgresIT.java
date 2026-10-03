@@ -1,5 +1,6 @@
 package com.seatres.support;
 
+import org.springframework.boot.test.autoconfigure.actuate.observability.AutoConfigureObservability;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.test.context.ActiveProfiles;
@@ -14,6 +15,8 @@ import org.testcontainers.utility.DockerImageName;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
+// Boot disables metrics export in tests; this keeps /actuator/prometheus as it is in production.
+@AutoConfigureObservability
 public abstract class AbstractPostgresIT {
 
     /** Digest-only form: Testcontainers rejects tag@digest when Boot derives the connection name. */
