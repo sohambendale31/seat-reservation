@@ -1,0 +1,188 @@
+# Seat Reservation Service
+
+A JSON HTTP API for reserving assigned seats for shows. It stays correct when thousands of users
+try to reserve the same seats at the same time.
+
+> **Status:** the specification is complete (`specs/`); implementation is pending. The commands
+> below describe the target behaviour defined in the specs. Deployed URL: ⟪TBD: deployed URL⟫.
+
+## Guarantees
+
+- A seat is never confirmed to two users (PostgreSQL row locks + constraints).
+- A user holds at most `perUserLimit` seats per show (default 4). This is enforced through a
+  per-(show, user) quota row and a DB CHECK constraint.
+- Multi-seat requests are all-or-nothing.
+- `Idempotency-Key` makes retries safe. The same key with the same request replays the original
+  outcome; the same key with a different request returns `409 IDEMPOTENCY_KEY_REUSED`.
+- Domain conflicts are `4xx` with stable codes. Overload waits in line instead of failing, and a
+  20k burst against the deployed URL must show 0 × 5xx (ADR-022). A `503` means a real dependency
+  failure and is safe to retry.
+- `available + held + confirmed = total` for every show, by construction.
+- Money is integer paise, and identity comes only from the JWT.
+
+Design details: [specs/04-concurrency-and-correctness.md](specs/04-concurrency-and-correctness.md).
+
+## Architecture
+
+One Spring Boot 3 (Java 21) application instance in front of one PostgreSQL 16 database, which
+decides every allocation. Concurrency-critical SQL uses `JdbcTemplate` (explicit `FOR UPDATE`,
+`ON CONFLICT`, row-count assertions). Flyway manages the schema, Micrometer exports Prometheus
+metrics, and logs are ECS JSON.
+
+```
+client ─▶ edge/TLS ─▶ app ─▶ HikariCP ─▶ PostgreSQL 16
+```
+
+| Spec | Topic |
+|---|---|
+| [00-overview](specs/00-overview.md) | Scope, requirements, threat model |
+| [01-architecture](specs/01-architecture.md) | Stack, packages, request lifecycles, diagrams |
+| [02-api-contract](specs/02-api-contract.md) | Endpoints, errors, examples |
+| [03-data-model](specs/03-data-model.md) | DDL, state machines, invariants |
+| [04-concurrency-and-correctness](specs/04-concurrency-and-correctness.md) | Locking and transactions |
+| [05-observability](specs/05-observability.md) | Probes, metrics, logs, alerts |
+| [06-testing-and-load](specs/06-testing-and-load.md) | Tests and burst script |
+| [07-deployment](specs/07-deployment.md) | Docker, env vars, hosting |
+| [08-implementation-plan](specs/08-implementation-plan.md) | Delivery plan |
+| [09-writeup-outline](specs/09-writeup-outline.md) | Outline for WRITEUP.md |
+| [10-decision-log](specs/10-decision-log.md) | ADRs |
+
+## Prerequisites
+
+- JDK 21 (for `./mvnw` and the scripts)
+- Docker with Compose v2 (for the local stack and Testcontainers)
+- Optional: `curl`, `jq`
+
+## Run locally
+
+```bash
+docker compose up -d --build
+curl -fsS localhost:8080/readyz          # {"status":"UP"}
+```
+
+Compose starts PostgreSQL 16 and the app with profile `local`, which uses a dev-only JWT secret and
+a dev-only admin key (`local-dev-only-admin-key-change-me-0123456789`).
+Reset all data with `docker compose down -v`.
+
+## Configuration
+
+The full contract is in [specs/07-deployment.md §3](specs/07-deployment.md).
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` | — | PostgreSQL connection (JDBC URL) |
+| `APP_AUTH_JWT_SECRET` | — (a dev default in `local` only) | HS256 signing secret, ≥ 32 bytes. Never shared |
+| `APP_AUTH_ADMIN_KEY` | — (a dev default in `local` only) | Required to get an ADMIN token from `POST /auth/token`, ≥ 32 bytes |
+| `DB_POOL_MAX_SIZE` | `20` | Connection pool size |
+| `DB_POOL_CONNECTION_TIMEOUT_MS` | `60000` | How long a request waits in line for a connection (last resort before a 503) |
+| `DB_LOCK_TIMEOUT_MS` / `DB_STATEMENT_TIMEOUT_MS` | `30000` / `35000` | PostgreSQL last-resort timeouts |
+| `APP_IDEMPOTENCY_RETENTION` | `PT24H` | How long idempotency keys are kept |
+
+To override locally, copy `.env.example` to `.env`. Never commit real secrets.
+
+## Authentication
+
+Requests carry bearer JWTs (HS256) with the claims `sub` (user id), `roles` (`USER`, `ADMIN`),
+`iss=seat-reservation`, `aud=seat-reservation-api`, and `exp`. Identity is never read from request
+bodies. Get tokens from the demo token endpoint (ADR-021). USER tokens need nothing else; an ADMIN
+token also needs the admin key:
+
+```bash
+ADMIN_KEY='local-dev-only-admin-key-change-me-0123456789'   # local default; for a deployment, use the shared admin key
+ADMIN=$(curl -s localhost:8080/auth/token -H 'Content-Type: application/json' -H "X-Admin-Key: $ADMIN_KEY" \
+  -d '{"sub":"admin-1","roles":["ADMIN"]}' | jq -r .accessToken)
+ALICE=$(curl -s localhost:8080/auth/token -H 'Content-Type: application/json' \
+  -d '{"sub":"alice"}' | jq -r .accessToken)
+```
+
+This is a **demo** identity provider: anyone can get a USER token for any user id. The JWT signing
+secret is never shared. `java scripts/MintToken.java` still works offline if you have the secret.
+
+## API
+
+| Method | Path | Role |
+|---|---|---|
+| POST | `/auth/token` | public (ADMIN role needs `X-Admin-Key`) |
+| POST | `/shows` | ADMIN |
+| GET | `/shows/{id}` | USER/ADMIN |
+| POST | `/shows/{id}/reserve` (header `Idempotency-Key` required) | USER |
+| POST | `/reservations/{id}/cancel` | USER (owner) |
+| GET | `/livez`, `/readyz`, `/actuator/prometheus` | public |
+
+```bash
+SHOW=$(curl -s localhost:8080/shows -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' \
+  -d '{"name":"Demo","startsAt":"2026-12-01T19:30:00+05:30","perUserLimit":4,
+       "rows":[{"row":"A","seatCount":10,"pricePaise":25000}]}' | jq -r .id)
+
+KEY=$(uuidgen)
+curl -s -X POST localhost:8080/shows/$SHOW/reserve -H "Authorization: Bearer $ALICE" \
+  -H 'Content-Type: application/json' -H "Idempotency-Key: $KEY" -d '{"seats":["A1","A2"]}'
+# Retrying with the same KEY replays the same response (header Idempotent-Replayed: true)
+
+curl -s localhost:8080/shows/$SHOW -H "Authorization: Bearer $ALICE"
+curl -s -X POST localhost:8080/reservations/<reservationId>/cancel -H "Authorization: Bearer $ALICE"
+```
+
+Errors are RFC 9457 Problem Details with a stable `code` (e.g. `SEAT_UNAVAILABLE`,
+`USER_LIMIT_EXCEEDED`, `IDEMPOTENCY_KEY_REUSED`); see [02-api-contract](specs/02-api-contract.md).
+
+**Client retry rule:** after a timeout, a transport error, or a `503`, retry with the **same**
+`Idempotency-Key`. Use a new key only for a new attempt.
+
+## Database migrations
+
+Flyway runs automatically at startup (`src/main/resources/db/migration`, starting with
+`V1__baseline_schema.sql`). Hibernate only validates the schema. Migrations are forward-only.
+
+## Tests
+
+```bash
+./mvnw test                          # unit tests (no Docker)
+./mvnw verify                        # + Testcontainers integration and concurrency tests (Docker)
+./mvnw verify -DexcludedGroups=slow  # skip the DB-pause test
+```
+
+## Burst / load script
+
+```bash
+java scripts/BurstTest.java --scenario all --base-url http://localhost:8080
+java scripts/BurstTest.java --scenario pool-burst --requests 20000 --concurrency 500
+BASE_URL=https://<deployed-host> ADMIN_KEY='<deployment admin key>' \
+  java scripts/BurstTest.java --scenario all --concurrency 200
+BASE_URL=https://<deployed-host> ADMIN_KEY='<deployment admin key>' \
+  java scripts/BurstTest.java --scenario pool-burst --requests 20000 --concurrency 300
+```
+
+Scenarios: `hot-seat`, `pool-burst`, `same-key`, `user-limit`. The script gets its tokens from
+`POST /auth/token`. Each scenario ends with a reconciliation against `GET /shows/{id}` and against the
+per-show `seatres_seats` gauge, and asserts 0 × 5xx. The script prints counts for 201, 409 (by code), other 4xx, 5xx,
+timeouts, and transport errors. It separates HTTP responses from **logical** reservations (a replay
+doesn't count twice), resolves ambiguous outcomes by retrying with the same key, and exits non-zero
+if a correctness assertion fails. `--concurrency` limits in-flight requests; it does not open 20,000
+simultaneous connections.
+
+Test data: the script only creates new `burst-*` shows. Reset locally with `docker compose down -v`;
+for a deployed DB, see the purge in [07-deployment §10](specs/07-deployment.md).
+
+## Deployment
+
+The Docker image runs anywhere. The recommended host is Render: a single Docker Web Service plus
+Render PostgreSQL, with health check `/livez` (ADR-019). Steps, limitations, and a verification checklist are
+in [specs/07-deployment.md](specs/07-deployment.md).
+
+Deployed URL: ⟪TBD: deployed URL⟫
+
+## Metrics and logs
+
+- `/actuator/prometheus` exposes `seatres_reservations_confirmed_total`,
+  `seatres_reservation_declines_total{reason}`, `seatres_idempotency_replays_total{status}`,
+  `seatres_invariant_violations_total{check}`, and `seatres_seats{show_id,status}`, plus the
+  HTTP/Hikari/JVM metrics. Idempotent replays are never counted as new confirmations.
+- `seatres_seats` is per show for the 20 newest shows, read from PostgreSQL at scrape time over a
+  dedicated 2-connection pool, so it matches `GET /shows/{id}` even during a burst (ADR-023).
+- Logs are ECS JSON on stdout with `requestId` (`X-Request-Id`). Tokens, secrets, raw idempotency
+  keys, and raw user ids are never logged.
+
+## Write-up
+
+See [WRITEUP.md](WRITEUP.md).
