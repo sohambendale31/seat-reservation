@@ -25,6 +25,7 @@ public abstract class AbstractPostgresIT {
             .asCompatibleSubstituteFor("postgres");
 
     @ServiceConnection("postgresql")
+    @SuppressWarnings("resource")
     protected static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>(POSTGRES_IMAGE)
             .withDatabaseName("seatres")
             .withUsername("seatres")
