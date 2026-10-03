@@ -14,8 +14,8 @@
 
 ```dockerfile
 # syntax=docker/dockerfile:1
-# Pin both images by digest at implementation time (tags shown for readability).
-FROM eclipse-temurin:21-jdk AS build
+# Both images are pinned by tag and digest.
+FROM eclipse-temurin:21-jdk@sha256:3e3c176ffed168beb42c607be9bc1639b466cf00261a0fb04425562c9d0c5c2b AS build
 WORKDIR /workspace
 COPY .mvn/ .mvn/
 COPY mvnw pom.xml ./
@@ -24,7 +24,7 @@ COPY src/ src/
 # Tests need Docker (Testcontainers), so they run via ./mvnw verify outside the image build.
 RUN ./mvnw -B -q -DskipTests package && cp target/seat-reservation-service-*.jar /workspace/app.jar
 
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:21-jre@sha256:cff19e6215689161eb6162c11b86b0c60ddf802164f2eaf48d570f8fb79a36c5
 RUN groupadd --system app && useradd --system --gid app --home /app app
 WORKDIR /app
 COPY --from=build --chown=app:app /workspace/app.jar /app/app.jar
@@ -55,7 +55,7 @@ Every variable is mapped explicitly in `application.yml` rather than relying on 
 | `DB_LOCK_TIMEOUT_MS` | no | `30000` | PostgreSQL `lock_timeout` per connection (last resort, ADR-022) |
 | `DB_STATEMENT_TIMEOUT_MS` | no | `35000` | PostgreSQL `statement_timeout` per connection; longer than `lock_timeout` |
 | `APP_AUTH_JWT_SECRET` | **yes** (except in profile `local`, which has a dev default) | — | HS256 key, ≥ 32 bytes; generate with `openssl rand -base64 48`. Never shared |
-| `APP_AUTH_ADMIN_KEY` | **yes** (except in profile `local`, which has a dev default) | — | Required in `X-Admin-Key` to get an ADMIN token from `POST /auth/token` (ADR-021). ≥ 32 bytes; generate with `openssl rand -base64 48`. Shared privately with the evaluator |
+| `APP_AUTH_ADMIN_KEY` | **yes** (except in profile `local`, which has a dev default) | — | Required in `X-Admin-Key` to get an ADMIN token from `POST /auth/token` (ADR-021). ≥ 32 bytes, and **must differ from `APP_AUTH_JWT_SECRET`** (startup refuses equal values); generate with `openssl rand -base64 48`. Shared privately with the evaluator |
 | `APP_IDEMPOTENCY_RETENTION` | no | `PT24H` | ISO-8601 duration, ≥ `PT24H` (`StartupChecks` refuses lower values, because `04` §5 promises keys are honoured for at least 24 h) |
 | `JAVA_OPTS` | no | see Dockerfile | JVM flags |
 
@@ -156,12 +156,13 @@ management:   # full block in 05 §2
   metrics.distribution.percentiles-histogram.http.server.requests: true
 ```
 
-The implementer must verify that PgJDBC executes the three-statement `connection-init-sql`. If it
-doesn't, fall back to the JDBC URL parameter
+PgJDBC **does** execute the three-statement `connection-init-sql`; MIG-05 asserts all three settings
+on a pooled connection, so the fallback below is not in use (risk R-5 closed). It is kept for
+reference, should a future driver or pooler change that. The fallback is the JDBC URL parameter
 `options=-c%20lock_timeout%3D30000%20-c%20statement_timeout%3D35000%20-c%20idle_in_transaction_session_timeout%3D30000`.
-IT-FAIL-01 checks that `lock_timeout` is in effect on a pooled connection. (With this fallback the
-timeouts live in `DB_URL`, so `DB_LOCK_TIMEOUT_MS` / `DB_STATEMENT_TIMEOUT_MS` stop applying, and the
-observability pool would inherit them unless it gets its own URL.)
+(With this fallback the timeouts live in `DB_URL`, so `DB_LOCK_TIMEOUT_MS` /
+`DB_STATEMENT_TIMEOUT_MS` stop applying, and the observability pool would inherit them unless it
+gets its own URL.)
 
 **Two DataSources:** `ObservabilityDataSourceConfig` builds the second Hikari pool. It must **not**
 replace Spring Boot's auto-configured `DataSource`. Either expose it under a non-`DataSource` type
@@ -209,7 +210,7 @@ key shorter than 32 bytes, or equal to its local dev default, aborts startup.
 # docker-compose.yml
 services:
   postgres:
-    image: postgres:16-alpine        # pin digest at implementation
+    image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
     environment:
       POSTGRES_DB: seatres
       POSTGRES_USER: seatres

@@ -55,7 +55,10 @@ Format: Decision · Context · Alternatives · Rationale · Consequences. The st
 - **Consequences:** Clients must use a new key for a new attempt (documented in `02`).
 
 ## ADR-008: Replays return the original status plus `Idempotent-Replayed: true`
-> **Superseded in part by ADR-022:** a replayed *success* now returns 200, not 201.
+> **Corrected (ADR-024):** an earlier note here claimed ADR-022 had changed a replayed success to
+> 200. ADR-022 is about queueing overload and says nothing about replay status, while `04` §5,
+> `02` §5.3 and CT-03 all require the original status. A replayed success is therefore **201**, and
+> that is what the code does.
 - **Alternatives:** Return 200 for replays; use a dedicated replay status.
 - **Rationale:** Clients handle one response shape per outcome, while the header and the metrics
   separate replays from new confirmations.
@@ -226,3 +229,70 @@ Format: Decision · Context · Alternatives · Rationale · Consequences. The st
 - **Consequences:** `show_id` becomes a label on this one gauge (bounded, not personal data); T-8,
   ADR-016, and OBS-06 are relaxed for it. The pool-sizing rule adds 2 connections. Updated `00`,
   `01`, `05`, `06`, `07`, `08`, `09`, and the README.
+
+## ADR-024: Implementation decisions from P0–P3
+- **Context:** Building P0–P3 settled choices the specification left open, and in a few places a
+  library's actual behaviour overrode the spec's first draft. `00` §"Document map" requires a
+  disagreement to be fixed in every affected file rather than resolved silently in code, so the
+  decisions are recorded here and the affected sections have been updated.
+- **Decision:**
+  1. **Pinned versions.** Spring Boot `3.5.16`, Maven Wrapper `3.9.16` (`distributionType=only-script`,
+     so no wrapper jar is committed), and the three base images pinned by digest (`01` §1.1). Spring
+     Initializr no longer offers a 3.x line, so the parent is hand-pinned (risk R-10 realised).
+  2. **One PostgreSQL container per test JVM, started by hand.** `@Testcontainers`/`@Container` stops
+     a static container when its test class finishes, which strands the cached Spring context on a
+     dead database. `AbstractPostgresIT` starts it in a static initializer and never stops it; Ryuk
+     reaps it at JVM exit. The image is referenced digest-only, because Testcontainers rejects the
+     combined `tag@digest` form when Boot derives a `@ServiceConnection` name from it, so the name is
+     given explicitly as `@ServiceConnection("postgresql")`.
+  3. **Integration tests carry `@AutoConfigureObservability`.** Boot disables metrics export in tests,
+     so without it no `PrometheusMeterRegistry` exists and `/actuator/prometheus` answers 404 in tests
+     while working in production.
+  4. **Reconciliation R1–R6 are scoped to one show**, R7 stays global. Test classes share one database
+     without truncation, and MIG-03 deliberately writes inconsistent rows to probe constraints, so an
+     unscoped scan reports those fixtures as violations.
+  5. **`GlobalExceptionHandler` extends `ResponseEntityExceptionHandler`.** With
+     `spring.mvc.problemdetails.enabled=true`, Boot registers its own problem handler unless such a
+     bean exists; extending it keeps one handler and one body shape instead of two advices whose
+     ordering would become load-bearing.
+  6. **The resource server gets the problem entry point as well.** The bearer-token filter uses the
+     entry point configured inside `oauth2ResourceServer(...)`, not the one on `exceptionHandling(...)`,
+     so without setting both an *invalid* token returned an empty 401 body while a *missing* one
+     returned correct problem JSON.
+  7. **`TxExecutor` wraps `getTransaction`**, because a Hikari pool timeout surfaces there and has to
+     become a 503 rather than an unexpected 500 — which matters directly for the zero-5xx bar.
+  8. **`TxContext.rollbackOnly()`** lets the replay path end its transaction without committing and
+     without running after-commit hooks, which is what `04` §4's "roll back, nothing was written"
+     requires. A replay therefore provably writes nothing.
+  9. **`IN (:ids)` instead of `= ANY(:array)`** in S3, S5 and S8a: identical semantics in PostgreSQL,
+     and the JDBC layer expands the list into bind parameters without a `java.sql.Array`. A request
+     names at most 10 seats.
+  10. **Reservations use `INSERT … RETURNING created_at`**, which keeps `now()` as the source of the
+      timestamp while making it available for the stored response body without a re-select. Shows keep
+      an application-supplied `created_at`, truncated to microseconds so the create response equals a
+      later read, because they are written through JPA where `RETURNING` is not natural.
+  11. **Identity reaches controllers as `@AuthenticationPrincipal Jwt`.** The planned `CurrentUser`
+      record was not built: nothing needs the roles after authorization, so it would have carried an
+      unused field.
+  12. **`StartupChecks` also refuses a JWT secret equal to the admin key**, so one leaked value cannot
+      grant both token signing and admin access.
+  13. **Cross-field show validation lives in one class-level constraint** (`@ValidCreateShow`), which
+      is what allows the name to be length-checked *after* trimming while still reporting on field
+      `name`; reserve's duplicate-label rule is a field constraint (`@UniqueLabels`). Hibernate
+      Validator instantiates validators reflectively, so those classes are public.
+  14. **An unauthenticated request with the wrong method is 401, not 405**, because security runs
+      before routing (consistent with ADR-018). 405 applies once the caller is authenticated.
+  15. **`Idempotency-Key` is validated in the controller body**, after Spring has bound and validated
+      the request body. A request wrong in both reports `VALIDATION_FAILED` first; a missing or
+      malformed key with a valid body reports the key error as specified.
+- **Alternatives:** keep `@Container` (breaks the shared context); scan the whole database for
+  reconciliation (collides with the constraint probes); register a second advice beside Boot's problem
+  handler (ordering becomes significant); pass a `java.sql.Array` to keep `= ANY` (more JDBC plumbing,
+  no behavioural gain); build `CurrentUser` anyway (dead field).
+- **Rationale:** every item is either forced by how a library actually behaves or removes code that
+  nothing uses. None of them changes a guarantee in `04` §1, a status code in `02` §4.1, or a
+  constraint in `03` §3.
+- **Consequences:** updated `00` §status/A-1, `01` §1/§1.1/§1.2/§2/§3/§4.2/§4.3/§7, `02` §1/§2.1,
+  `03` §6.2/§7.3, `04` §4/§10, `06` §1/§2/§3.1/§3.2/§3.4/§3.7, `07` §2/§3/§4.1/§6, `08` P0–P3 and the
+  risk register, and ADR-008 above. Risk R-5 is closed, and risk R-10 is realised with no impact
+  beyond the hand-pinned parent.

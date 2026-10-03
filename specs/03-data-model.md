@@ -38,10 +38,12 @@ fails `NOT NULL`.
 
 ## 3. Executable DDL: `src/main/resources/db/migration/V1__baseline_schema.sql`
 
+This block is the applied file verbatim. `V1` has been applied, so it is **frozen**: any change,
+including a comment, alters its Flyway checksum and makes `validate-on-migrate` refuse to start
+against an existing database. Schema changes go in a new `V2__…`.
+
 ```sql
--- V1__baseline_schema.sql
--- Seat reservation service baseline schema. PostgreSQL 15+.
--- Do not edit after it has been applied anywhere; add V2__... instead.
+-- Baseline schema. Do not edit once applied anywhere; add V2__... instead.
 
 CREATE TABLE shows (
     id              uuid         PRIMARY KEY,
@@ -71,7 +73,7 @@ CREATE TABLE seats (
     CONSTRAINT seats_status_reservation_ck  CHECK ((status = 'AVAILABLE') = (reservation_id IS NULL))
 );
 
--- Cancellation: find a reservation's current seats.
+-- Find a reservation's current seats on cancel.
 CREATE INDEX seats_reservation_idx ON seats (reservation_id) WHERE reservation_id IS NOT NULL;
 
 CREATE TABLE reservations (
@@ -107,7 +109,7 @@ CREATE TABLE reservation_seats (
     CONSTRAINT reservation_seats_price_ck    CHECK (price_paise BETWEEN 0 AND 100000000)
 );
 
--- Second, independent guard against double-selling: at most one ACTIVE (unreleased) link per seat.
+-- Independent guard against double-selling: at most one unreleased link per seat.
 CREATE UNIQUE INDEX reservation_seats_one_active_per_seat_uk
     ON reservation_seats (seat_id) WHERE released_at IS NULL;
 
@@ -118,7 +120,7 @@ CREATE TABLE user_show_quotas (
     seat_limit      integer      NOT NULL,
     CONSTRAINT user_show_quotas_pk           PRIMARY KEY (show_id, user_id),
     CONSTRAINT user_show_quotas_limit_ck     CHECK (seat_limit BETWEEN 1 AND 10),
-    -- DB-enforced per-user limit: no transaction can commit a quota above the limit or below zero.
+    -- No transaction can commit a quota above the limit or below zero.
     CONSTRAINT user_show_quotas_held_ck      CHECK (seats_held BETWEEN 0 AND seat_limit)
 );
 
@@ -136,7 +138,7 @@ CREATE TABLE idempotency_records (
     CONSTRAINT idempotency_records_fp_ck           CHECK (request_fingerprint ~ '^[0-9a-f]{64}$'),
     CONSTRAINT idempotency_records_key_ck          CHECK (idem_key ~ '^[A-Za-z0-9_.:-]{1,128}$'),
     CONSTRAINT idempotency_records_status_ck       CHECK (response_status IS NULL OR response_status BETWEEN 200 AND 499),
-    -- response_status, response_body, completed_at are set together (finalize step).
+    -- These three are set together on finalize.
     CONSTRAINT idempotency_records_completion_ck   CHECK (
         (response_status IS NULL) = (completed_at IS NULL)
         AND (response_status IS NULL) = (response_body IS NULL)
@@ -212,6 +214,10 @@ Example: `v1|RESERVE|show=7f1c2b9e-3a7d-4a51-9a1f-0f3f3c1c2d10|seats=A1,A2`
 `request_fingerprint = lowercase hex(SHA-256(UTF-8(canonical string)))`. The `v1|` prefix lets the
 canonical form evolve without false matches.
 
+Sorting is String natural order, so `A10` sorts before `A2`. That only has to be deterministic, not
+numeric: the fingerprint compares two requests with each other, and the lock order is `seats.id`
+(04 §3), never the label.
+
 ### 6.3 Storage lifecycle
 
 1. **Claim** (first statement of the transaction):
@@ -283,6 +289,12 @@ statement, so a response can never violate the invariant.
 Each query returns the violating rows; an empty result means the invariant holds. They are used by
 the integration and concurrency tests (asserted empty after each concurrency test) and as manual
 runbook queries in production (05 §6).
+
+**In tests, R1–R6 are scoped to one show** by adding `show_id = :showId` (`reservation_seats` and
+`seats` both carry `show_id`, so R6 scopes on either side). Test classes share one database without
+truncation, and MIG-03 deliberately writes inconsistent rows to probe constraints, so an unscoped
+scan would report those fixtures as violations (ADR-024). R7 has no show column and stays global.
+The unscoped forms below are the runbook versions.
 
 ```sql
 -- R1: seat count per show matches total_seats (X-1)

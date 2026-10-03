@@ -1,7 +1,10 @@
 # 00 — Overview: Concurrency-Safe Seat Reservation Service
 
-> Status: **Specification (pre-implementation)**. Nothing in this document claims that code, tests,
-> benchmarks, or deployments exist. Results are produced later and recorded in `WRITEUP.md`.
+> Status: **Phases P0–P3 implemented** (scaffold and schema, error model and security, shows and
+> transaction plumbing, reserve and idempotency). Cancel, observability, the burst script and the
+> deployment are still pending, so no claim is made here about load results or a deployed URL.
+> Measured numbers belong in `WRITEUP.md`, backed by committed evidence. Implementation decisions
+> that refined this specification are recorded in ADR-024.
 
 Document map:
 
@@ -107,7 +110,7 @@ In scope:
 
 | ID | Assumption / constraint | Rationale |
 |---|---|---|
-| A-1 | The stack is fixed: Java 21, Spring Boot 3.x (3.5.x line), PostgreSQL 16, Maven, Docker. | Assignment mandate. |
+| A-1 | The stack is fixed: Java 21, Spring Boot 3.x (built on 3.5.16), PostgreSQL 16, Maven, Docker. | Assignment mandate. |
 | A-2 | Reserve **confirms immediately** (`AVAILABLE → CONFIRMED`). `HELD` exists in the seat status domain and in `available + held + confirmed = total`, but is always 0 in v1. | No confirm/payment endpoint is required. |
 | A-3 | The per-user limit counts **seats** (not reservations) in `CONFIRMED` state for that user in that show. Cancelled seats no longer count. | Matches "seat limit". |
 | A-4 | `perUserLimit` is set at show creation and is immutable. The quota row copies it (`seat_limit`) so a DB CHECK can enforce it. | Shows are immutable in v1. |

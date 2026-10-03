@@ -21,7 +21,9 @@ integer **paise** (`long`) of INR.
 Any other path → 404 `NOT_FOUND` (problem JSON) for a caller with a valid token. Without a valid token
 it's 401 `UNAUTHENTICATED`: security rules run before routing, and unmatched paths require
 authentication (fail-closed, so a new endpoint is never public by accident). Wrong method → 405
-`METHOD_NOT_ALLOWED`.
+`METHOD_NOT_ALLOWED` for an authenticated caller; without a valid token it is 401, for the same
+reason (security runs before routing). The one public method is `POST /auth/token`, so e.g.
+`GET /auth/token` is 401 anonymously and 405 with a token.
 
 ## 2. Authentication and authorization
 
@@ -42,7 +44,8 @@ authentication (fail-closed, so a new endpoint is never public by accident). Wro
 Signing key: `APP_AUTH_JWT_SECRET`, as UTF-8 bytes, **≥ 32 bytes**. Startup fails if it is shorter.
 In profile `prod`, startup also fails if the secret equals the committed dev default. The same two
 rules apply to the admin key `APP_AUTH_ADMIN_KEY` used by `POST /auth/token` (§5.5): ≥ 32 bytes, and
-not the dev default under `prod`.
+not the dev default under `prod`. Startup also fails if the two are equal, so one leaked value can
+never grant both token signing and admin access (ADR-024).
 
 The **only** source of user identity is `sub`. Request bodies never carry identity. Jackson runs with
 `FAIL_ON_UNKNOWN_PROPERTIES=true`, so a body containing `"userId"` is rejected with 400

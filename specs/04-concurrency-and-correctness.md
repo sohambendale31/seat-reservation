@@ -112,7 +112,8 @@ WHERE user_id = :userId AND idem_key = :idemKey;
 ```
 
   - `request_fingerprint = :fingerprint` → **Replayed**(status, body). Roll back (nothing was
-    written) and return.
+    written) and return. The callback signals this through `rollbackOnly` (§10), so the transaction
+    ends without a commit and without after-commit hooks.
   - Otherwise → throw `IdempotencyKeyReusedException` → 409 `IDEMPOTENCY_KEY_REUSED`; roll back.
   - Row not found (deleted by cleanup between S1 and S1b, which is only possible after ≥ 24 h) →
     repeat S1 once. If it still races, respond 503 `SERVICE_UNAVAILABLE`.
@@ -127,7 +128,7 @@ SELECT per_user_limit FROM shows WHERE id = :showId;
 ```sql
 -- S3  resolve labels to seat ids (no locks)
 SELECT id, label FROM seats
-WHERE show_id = :showId AND label = ANY(:labels)
+WHERE show_id = :showId AND label IN (:labels)
 ORDER BY id;
 ```
 
@@ -155,7 +156,7 @@ FOR UPDATE;
 -- S5  [L3] lock seats in ascending id order
 SELECT id, label, status, price_paise
 FROM seats
-WHERE show_id = :showId AND id = ANY(:seatIds)
+WHERE show_id = :showId AND id IN (:seatIds)
 ORDER BY id
 FOR UPDATE;
 ```
@@ -167,9 +168,11 @@ FOR UPDATE;
   this one commits.
 
 ```sql
--- S6  write reservation
+-- S6  write reservation. RETURNING supplies created_at for the stored response body, so the
+--     timestamp still comes from now() and needs no re-select.
 INSERT INTO reservations (id, show_id, user_id, status, seat_count, total_paise, created_at)
-VALUES (:reservationId, :showId, :userId, 'CONFIRMED', :n, :totalPaise, now());
+VALUES (:reservationId, :showId, :userId, 'CONFIRMED', :n, :totalPaise, now())
+RETURNING created_at;
 
 -- S7  write links (JDBC batch, n rows)
 INSERT INTO reservation_seats (reservation_id, seat_id, show_id, price_paise)
@@ -178,7 +181,7 @@ VALUES (:reservationId, :seatId, :showId, :pricePaise);
 -- S8a confirm seats (defence in depth: the predicate re-checks AVAILABLE)
 UPDATE seats
 SET status = 'CONFIRMED', reservation_id = :reservationId
-WHERE show_id = :showId AND id = ANY(:seatIds) AND status = 'AVAILABLE';
+WHERE show_id = :showId AND id IN (:seatIds) AND status = 'AVAILABLE';
 -- assert updated rows = n, else IllegalStateException → rollback → 500
 
 -- S8b quota (the DB CHECK enforces seats_held ≤ seat_limit even if S4's check were buggy)
@@ -195,6 +198,10 @@ WHERE id = :idemId;
 
 -- COMMIT
 ```
+
+The list predicates are written `IN (:ids)`. `= ANY(:array)` is equivalent in PostgreSQL; the `IN`
+form lets the JDBC layer expand the list into bind parameters without building a `java.sql.Array`,
+and a request names at most 10 seats (ADR-024).
 
 `totalPaise` is computed in Java with `Math.addExact` over the locked rows' `price_paise`. The 201
 body and the decline bodies are serialized **before** S9, so the stored bytes are exactly the bytes
@@ -430,7 +437,10 @@ User A cancels R, which holds seat B7. User U requests B7.
 ```text
 attempt = 1
 loop:
-  status = txManager.getTransaction(PROPAGATION_REQUIRED, default isolation, timeout = 45s)  // > statement_timeout
+  try:                          // a pool timeout surfaces here, so it must map to 503, not 500
+     status = txManager.getTransaction(PROPAGATION_REQUIRED, default isolation, timeout = 45s)  // > statement_timeout
+  catch (Throwable t):
+     throw mapped(classifier.classify(t))
   try:
      result = callback()
   catch (Throwable t):
@@ -439,6 +449,8 @@ loop:
      if cat == RETRYABLE (40P01, 40001) and attempt < 3:
          sleep(random(5..25 ms) × attempt); attempt++; continue
      throw mapped(cat)          // RETRYABLE-exhausted/BUSY/UNAVAILABLE → 503; BUG → 500; ApiException → as is
+  if callback asked for rollbackOnly:                 // the replay path wrote nothing
+     txManager.rollback(status); return result        // no commit, no after-commit hooks
   try:
      txManager.commit(status)
   catch (Throwable t):

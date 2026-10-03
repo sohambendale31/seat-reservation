@@ -268,6 +268,22 @@ class TxExecutorTest {
     }
 
     @Test
+    void rollbackOnlyWorkIsRolledBackAndSkipsHooks() {
+        AtomicInteger hookRuns = new AtomicInteger();
+
+        String result = executor.execute(context -> {
+            context.afterCommit(hookRuns::incrementAndGet);
+            context.rollbackOnly();
+            return "replayed";
+        });
+
+        assertThat(result).isEqualTo("replayed");
+        assertThat(hookRuns).hasValue(0);
+        verify(transactionManager).rollback(any());
+        verify(transactionManager, never()).commit(any());
+    }
+
+    @Test
     void listResultsAreReturnedUnchanged() {
         assertThat(executor.<List<String>>execute(context -> List.of("A1", "A2")))
                 .containsExactly("A1", "A2");

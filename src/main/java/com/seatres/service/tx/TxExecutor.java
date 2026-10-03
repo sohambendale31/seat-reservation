@@ -62,6 +62,11 @@ public class TxExecutor {
                 throw mapped(category, failure);
             }
 
+            if (context.rollbackOnly) {
+                rollbackQuietly(status);
+                return result;
+            }
+
             try {
                 transactionManager.commit(status);
             } catch (Throwable failure) {
@@ -133,9 +138,15 @@ public class TxExecutor {
     public static final class TxContext {
 
         private final List<Runnable> afterCommit = new ArrayList<>(2);
+        private boolean rollbackOnly;
 
         public void afterCommit(Runnable hook) {
             afterCommit.add(hook);
+        }
+
+        /** For work that decided it has nothing to write. Skips the commit and the hooks. */
+        public void rollbackOnly() {
+            this.rollbackOnly = true;
         }
 
         private void runHooks() {

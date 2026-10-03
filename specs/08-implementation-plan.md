@@ -22,7 +22,7 @@ flowchart LR
 
 ## 2. Phases
 
-### P0: Scaffold, database, health (≈ 0.75 h)
+### P0: Scaffold, database, health (≈ 0.75 h) — **done**
 
 Tasks:
 1. `git init`; `.gitignore` (`target/`, `.env`, IDE files). Create the Spring Initializr project
@@ -32,10 +32,13 @@ Tasks:
 4. Add `ShowEntity` and `ShowJpaRepository` (needed for `ddl-auto=validate`).
 5. Add `AbstractPostgresIT` (Testcontainers `postgres:16-alpine`, `@ServiceConnection`).
 6. Add `Dockerfile`, `.dockerignore`, `docker-compose.yml`, and `.env.example`.
+7. Also landed: `AppProperties` (so the `app.*` tree is bound rather than dead config) and a
+   placeholder `SecurityConfig` that only disables the starter's HTTP Basic, so the probes stay
+   reachable before P1 replaces it.
 
-Done when: MIG-01..MIG-03 pass, and `docker compose up --build` reaches `/readyz` 200.
+Done when: MIG-01..MIG-03 and MIG-05 pass, and `docker compose up --build` reaches `/readyz` 200.
 
-### P1: Error model and security (≈ 1 h)
+### P1: Error model and security (≈ 1 h) — **done**
 
 Tasks:
 1. `ErrorCode`, the `ApiException` hierarchy, and `GlobalExceptionHandler` (Problem Details with
@@ -50,9 +53,10 @@ Tasks:
 5. The demo token endpoint: `TokenIssuer` (`NimbusJwtEncoder`, HS256) and `AuthController`
    (`POST /auth/token`, ADMIN gated by a constant-time `X-Admin-Key` check; ADR-021).
 
-Done when: UT-04, UT-07, UT-08, UT-09, AUTH-01..AUTH-13, and MIG-04 pass.
+Done when: UT-04, UT-07, UT-08, UT-09, MIG-04, and AUTH-01..AUTH-05, AUTH-08..AUTH-14 pass.
+AUTH-06 and AUTH-07 need the reserve endpoint, so they land with P3.
 
-### P2: Shows and transaction plumbing (≈ 1 h)
+### P2: Shows and transaction plumbing (≈ 1 h) — **done**
 
 Tasks:
 1. DTOs with Bean Validation; `RequestFingerprinter`; UT-01..UT-03.
@@ -61,7 +65,7 @@ Tasks:
 
 Done when: IT-SHOW-01..04 pass.
 
-### P3: Reserve and idempotency (test-first, ≈ 2.5 h) ★ critical path
+### P3: Reserve and idempotency (test-first, ≈ 2.5 h) ★ critical path — **done**
 
 The order is mandatory: write the concurrency tests **before** the implementation, and watch them
 fail first.
@@ -80,7 +84,7 @@ fail first.
    `for i in 1 2 3 4 5; do ./mvnw -q verify -Dit.test='*ConcurrencyIT' || break; done`.
 6. IT-FAIL-01 (lock timeout → 503, full rollback).
 
-Done when: T2 passes in 5 of 5 runs, with no deadlocks.
+Done when: T2 passes in 5 of 5 runs, with no deadlocks, and AUTH-06/AUTH-07 pass.
 
 ### P4: Cancel (≈ 0.75 h)
 
@@ -135,7 +139,7 @@ Done when: the public `/readyz` returns 200 and both deployed runs print `ASSERT
 
 | Checkpoint | When | Gate |
 |---|---|---|
-| D1 | After P0 | `docker compose up --build` → `/readyz` 200 from a clean clone (`git clone` into a temp dir) |
+| D1 | After P0 | `docker compose up --build` → `/readyz` 200 from a clean clone (`git clone` into a temp dir) — **passed** |
 | D2 | After P3 | Push and deploy early (even before cancel) to surface hosting issues: the DB URL format, memory, `PORT` |
 | D3 | After P5 | Redeploy; `/actuator/prometheus` serves the custom metrics; logs are JSON |
 | D4 | After P7 | The deployed burst passes |
@@ -151,16 +155,22 @@ failure.
 | R-2 | Hosted free tier sleeps or is too small | High | Medium | Paid starter instance for the evaluation window; document it; warm up first |
 | R-3 | DB `max_connections` too low on the hosted plan | Medium | Medium | Lower `DB_POOL_MAX_SIZE` (remember the +2 observability connections), or pick a bigger plan |
 | R-4 | Virtual-thread pinning or unexpected blocking | Low | Medium | Fall back to `spring.threads.virtual.enabled=false` with Tomcat `threads.max=200` |
-| R-5 | PgJDBC doesn't run the multi-statement `connection-init-sql` | Low | Medium | JDBC `options` URL fallback (`07` §4.1); IT-FAIL-01 verifies `SHOW lock_timeout` |
+| R-5 | ~~PgJDBC doesn't run the multi-statement `connection-init-sql`~~ **Closed:** MIG-05 asserts all three settings on a pooled connection, so the `options=` URL fallback is unused | — | — | — |
 | R-6 | Hibernate validation mismatch | Medium | Low | Entity column definitions mirror the DDL; MIG-01 catches it |
 | R-7 | Docker unavailable for Testcontainers | Low | High | Docker is a documented prerequisite; unit tests still run without it |
 | R-8 | The 20k burst produces any 5xx on the hosted plan | High | **High** (fails the assignment's bar) | Overload queues (ADR-022); choose the plan by measurement with L-4; scale the instance/DB or tune the pool; fast-path fallback (`04` §12); rerun until 0 × 5xx |
 | R-9 | Running out of time | Medium | High | Cut order: IT-FAIL-02 → dashboard text → latency percentiles in burst output. Never cut: CT-01..07, cancel, required metrics, deployment |
-| R-10 | Spring Boot 3.5 OSS support has ended by implementation time | Medium | Low | Still mandated (3.x); note it in WRITEUP |
+| R-10 | ~~Spring Boot 3.5 OSS support has ended by implementation time~~ **Realised:** Initializr no longer offers a 3.x line, so the parent is hand-pinned to 3.5.16 | — | Low | Noted in `01` §1.1 and WRITEUP; 3.x stays mandated |
 | R-11 | The shared admin key is misused | Low | Low (demo data) | Share privately; rotate after the evaluation. The JWT signing secret is never shared (ADR-021) |
 | R-12 | Evaluator clients time out while the burst queues | Medium | Medium | Size the plan so p99 stays well below common client timeouts; report the measured percentiles |
 
-## 5. Final acceptance checklist
+## 5. Implementation decisions
+
+Choices made while building P0–P3, and the places where a library's real behaviour overrode the
+spec's first draft, are recorded in ADR-024. The affected sections of `00`–`08` have been updated,
+so this plan and the rest of the specs describe what the code actually does.
+
+## 6. Final acceptance checklist
 
 - [ ] `./mvnw verify` is green from a fresh clone (Docker running).
 - [ ] CT-01..CT-07 are green, with no deadlocks.

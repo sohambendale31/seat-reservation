@@ -13,16 +13,28 @@ Rules:
 
 - Concurrency tests go through **real HTTP** (embedded Tomcat on a random port), not MockMvc, so
   filters, security, the connection pool, and transactions behave as in production.
-- One PostgreSQL container per test JVM: a static `@Container` in an abstract `AbstractPostgresIT`
-  with `@ServiceConnection`, reused across test classes through Spring context caching. Each test
-  creates its **own show(s)**, so tests are isolated without truncation. After each concurrency test,
-  the reconciliation queries R1–R7 (03 §7.3) must return zero rows.
+- One PostgreSQL container per test JVM, declared in an abstract `AbstractPostgresIT` and started
+  from a static initializer, so it is never stopped and every test class shares one cached Spring
+  context (Ryuk removes it at JVM exit). It is deliberately **not** managed by
+  `@Testcontainers`/`@Container`: that extension stops a static container when its test class
+  finishes, which leaves the cached context on a dead database. The image is referenced digest-only
+  (`postgres@sha256:…`) with an explicit `@ServiceConnection("postgresql")`, because Testcontainers
+  rejects the combined `tag@digest` form when Boot derives the connection name from it (ADR-024).
+- The base class also carries `@AutoConfigureObservability`: Spring Boot disables metrics export in
+  tests, so without it no `PrometheusMeterRegistry` exists and `/actuator/prometheus` answers 404 in
+  tests while working in production.
+- Each test creates its **own show(s)**, so tests are isolated without truncation. After each
+  concurrency test, reconciliation R1–R6 (03 §7.3) must return zero rows **for that test's show**,
+  and R7 is asserted globally. A database-wide R1–R6 would flag MIG-03's deliberately inconsistent
+  constraint-probe rows.
 - Test profile `test`: `DB_POOL_MAX_SIZE=10`, `DB_LOCK_TIMEOUT_MS=2000`, a test JWT secret, and a test
   admin key. The short lock timeout is deliberate, so IT-FAIL-01 can force a timeout quickly; the
   production defaults are long (ADR-022).
-- Helpers: `TestTokens.user("alice")` and `TestTokens.admin()` mint HS256 tokens with
-  `NimbusJwtEncoder`. `Api` wraps `HttpClient` calls and returns status, headers, and JSON body.
-  `Reconciliation` runs R1–R7.
+- Helpers in `src/test/java/com/seatres/support/`: `TestTokens` mints HS256 tokens with
+  `NimbusJwtEncoder`, including the malformed variants the auth tests reject; `Api` wraps
+  `HttpClient` and returns status, headers and parsed JSON; `Shows` and `Reserve` drive those
+  endpoints; `Races` releases N tasks through a `CountDownLatch` start gate on virtual threads;
+  `Reconciliation` runs the invariant queries.
 - Races start deterministically: all tasks block on a `CountDownLatch(1)`, then are released
   together.
 - No `Thread.sleep`-based assertions; waits use latches/futures with timeouts (30 s per test).
@@ -34,9 +46,9 @@ Rules:
 | UT-01 | `RequestFingerprinter` | Label order is irrelevant; a different show gives a different fingerprint; `v1` prefix present |
 | UT-02 | `ReserveRequest` validation | 0 seats, 11 seats, duplicates, lowercase, `A0`, null; `A999` passes the pattern (it's rejected later as unknown) |
 | UT-03 | `CreateShowRequest` validation | Blank name, 201 rows, duplicate rows, seatCount 0 and 501, total 10,001, `pricePaise` negative and > 1e8 |
-| UT-04 | Strict Jackson | `pricePaise: 2500.5` → 400; `"2500"` → 400; unknown field `userId` → 400 |
+| UT-04 | Strict Jackson | Asserted on the configured `ObjectMapper` (`@JsonTest`): a fractional value, a quoted number and an unknown field are all rejected. The same rules are re-asserted over real HTTP on `CreateShowRequest` (IT-SHOW) and `ReserveRequest` (IT-RES) |
 | UT-05 | `DbErrorClassifier` | Each SQLState in `04` §10 → its category; nested causes; Hikari `SQLTransientConnectionException` |
-| UT-06 | `TxExecutor` (mocked `PlatformTransactionManager`) | Retries 40P01 up to 3 attempts, then 503; no retry for 23505 (→ 500); an exception from `commit()` with SQLState 08006 → `OutcomeUnknownException`; after-commit hooks run only on success |
+| UT-06 | `TxExecutor` (mocked `PlatformTransactionManager`) | Retries 40P01 up to 3 attempts, then 503; no retry for 23505 (→ 500) or for a lock timeout; an exception from `commit()` with SQLState 08006 → `OutcomeUnknownException`, while a definite commit failure is not; commits are never retried; after-commit hooks run only on success, never carry over into a retry, and a throwing hook never reaches the caller; `rollbackOnly` work rolls back and skips the hooks; a pool timeout from `getTransaction` → 503 |
 | UT-07 | `ErrorCode` → Problem | Every code has a status, type URN, and title; `retryable` flags match `02` §4.1 |
 | UT-08 | `RolesClaimConverter` | Roles → authorities; unknown values ignored; missing claim → none |
 | UT-09 | `TokenIssuer` | Issued tokens carry `iss`, `aud`, `sub`, `roles`, `iat`, and `exp = iat + 3600`, and are accepted by `JwtConfig`'s decoder; the admin-key comparison is constant-time (`MessageDigest.isEqual`) |
@@ -49,8 +61,9 @@ Rules:
 |---|---|---|
 | MIG-01 | Start the context on an empty DB | Flyway applies `V1`; `flyway_schema_history` has 1 successful row; Hibernate `validate` passes |
 | MIG-02 | Restart the context on the same DB | No new migrations; starts cleanly |
-| MIG-03 | Direct SQL constraint probes | A seat with `status = 'CONFIRMED'` and a null reservation fails `23514`; quota `seats_held = seat_limit + 1` fails `23514`; a second active link for a seat fails `23505` |
-| MIG-04 | Startup guard | A context with a 16-byte JWT secret fails to start; the `prod` profile with the dev secret fails; `APP_IDEMPOTENCY_RETENTION=PT1H` fails; a 16-byte admin key fails; the `prod` profile with the dev admin key fails |
+| MIG-03 | Direct SQL constraint probes | A seat with `status = 'CONFIRMED'` and a null reservation fails `23514`; quota `seats_held = seat_limit + 1` fails `23514`; a second active link for a seat fails `23505`; a seat pointing at another show's reservation fails `23503`. These fixtures are intentionally inconsistent, which is why reconciliation is show-scoped |
+| MIG-04 | Startup guard (implemented as a `*Test` with `ApplicationContextRunner`, since it needs no database) | A context with a 16-byte JWT secret fails to start; the `prod` profile with the dev secret fails; `APP_IDEMPOTENCY_RETENTION=PT1H` fails; a 16-byte admin key fails; the `prod` profile with the dev admin key fails; a JWT secret equal to the admin key fails |
+| MIG-05 | `connection-init-sql` is actually executed by PgJDBC | `SHOW lock_timeout`, `SHOW statement_timeout` and `SHOW idle_in_transaction_session_timeout` on a pooled connection return the configured values, so the `options=` URL fallback in `07` §4.1 is not needed (closes risk R-5) |
 
 ### 3.2 Authentication and authorization
 
@@ -61,14 +74,15 @@ Rules:
 | AUTH-03 | `sub` violating the pattern (e.g. 65 chars, or containing a space) | 401 |
 | AUTH-04 | USER token → `POST /shows` | 403 `FORBIDDEN` |
 | AUTH-05 | ADMIN-only token → reserve | 403 |
-| AUTH-06 | Reserve body with `"userId":"mallory"` | 400 `MALFORMED_REQUEST`; no reservation created |
-| AUTH-07 | The reservation owner is the token `sub` | DB row `reservations.user_id` = the token's sub |
+| AUTH-06 | Reserve body with `"userId":"mallory"` | 400 `MALFORMED_REQUEST`; no reservation created. Lives with the reserve tests, since it needs that endpoint |
+| AUTH-07 | The reservation owner is the token `sub` | DB row `reservations.user_id` = the token's sub. Lives with the reserve tests, since it needs that endpoint |
 | AUTH-08 | `/livez`, `/readyz`, `/actuator/prometheus` without a token | 200 |
 | AUTH-09 | `/actuator/env` without a token / with a valid token | 401 / 404 (unmatched paths require authentication) |
 | AUTH-10 | Valid token with no `roles` claim → `GET /shows/{id}` | 403 `FORBIDDEN` (a missing claim is treated as empty) |
 | AUTH-11 | `POST /auth/token {"sub":"alice"}` (no auth header) | 200 with `accessToken`; that token reserves successfully and `reservations.user_id` = `alice` |
 | AUTH-12 | `POST /auth/token` with `roles:["ADMIN"]`: no `X-Admin-Key` / a wrong key / the correct key | 403 `FORBIDDEN` and no token / 403 / 200, and that token can `POST /shows` |
 | AUTH-13 | `POST /auth/token` with an invalid `sub` (65 chars, or containing a space) or an unknown role | 400 `VALIDATION_FAILED` |
+| AUTH-14 | `GET /auth/token` (only `POST` is public) without a token / with a valid token | 401 / 405, because security runs before routing (`02` §1) |
 
 ### 3.3 Shows
 
@@ -81,9 +95,12 @@ Rules:
 
 ### 3.4 Reservations
 
+`Idempotency-Key` is read after the body has been bound and validated, so a request that is invalid
+in both reports `VALIDATION_FAILED` rather than the key error (`01` §4.3).
+
 | ID | Test | Expected |
 |---|---|---|
-| IT-RES-01 | Reserve `[A1,A2]` | 201; `totalPaise` = sum; GET shows A1, A2 CONFIRMED; quota `seats_held=2` |
+| IT-RES-01 | Reserve `[A1,A2]` | 201; `totalPaise` = sum; GET shows A1, A2 CONFIRMED; quota `seats_held=2`; seats listed in layout order regardless of request order |
 | IT-RES-02 | Missing / invalid `Idempotency-Key` | 400 `IDEMPOTENCY_KEY_MISSING` / `IDEMPOTENCY_KEY_INVALID` |
 | IT-RES-03 | Reserve a taken seat | 409 `SEAT_UNAVAILABLE`, `unavailableSeats=["A1"]` |
 | IT-RES-04 | All-or-nothing: A1 taken by bob; alice requests `[A1,A2,A3]` | 409; A2 and A3 still AVAILABLE; alice's quota unchanged |
@@ -126,7 +143,7 @@ Rules:
 
 | ID | Test | Expected |
 |---|---|---|
-| IT-FAIL-01 | Lock timeout and rollback: a separate JDBC connection runs `BEGIN; SELECT ... FROM seats WHERE label='A1' FOR UPDATE` and holds it; then reserve A1 (test `lock_timeout=2s`) | 503 `SERVICE_UNAVAILABLE` with `Retry-After`; no idempotency row and no quota change (full rollback); after the lock is released, the same key → 201. Also asserts `SHOW lock_timeout` on a pooled connection = `2s`. |
+| IT-FAIL-01 | Lock timeout and rollback: a separate JDBC connection (opened outside the pool, so holding a lock cannot starve the app) runs `BEGIN; SELECT ... FROM seats WHERE label='A1' FOR UPDATE` and holds it; then reserve A1 (test `lock_timeout=2s`) | 503 `SERVICE_UNAVAILABLE` with `Retry-After`; no idempotency row and no quota row (full rollback); the seat is still AVAILABLE; after the lock is released, the same key → 201. `SHOW lock_timeout` is asserted by MIG-05. |
 | IT-FAIL-02 | Readiness with the DB paused (`docker pause` through the Testcontainers client; **tagged `@Tag("slow")`**) | `/readyz` 503, `/livez` 200; reserve → 503; after unpausing, `/readyz` 200 |
 | IT-FAIL-03 | Error bodies | 500/503 bodies contain no SQL, class names, or constraint names |
 
