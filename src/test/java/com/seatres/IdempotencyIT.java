@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.seatres.support.AbstractPostgresIT;
 import com.seatres.support.Api;
+import com.seatres.support.Cancel;
 import com.seatres.support.Reconciliation;
 import com.seatres.support.Reserve;
 import com.seatres.support.Shows;
@@ -26,6 +27,7 @@ class IdempotencyIT extends AbstractPostgresIT {
     private Api api;
     private Shows shows;
     private Reserve reserve;
+    private Cancel cancel;
     private Reconciliation reconciliation;
     private String alice;
     private String bob;
@@ -35,6 +37,7 @@ class IdempotencyIT extends AbstractPostgresIT {
         api = new Api(port);
         shows = new Shows(api, TestTokens.admin());
         reserve = new Reserve(api);
+        cancel = new Cancel(api);
         reconciliation = new Reconciliation(jdbc);
         alice = TestTokens.user("alice");
         bob = TestTokens.user("bob");
@@ -123,14 +126,14 @@ class IdempotencyIT extends AbstractPostgresIT {
     void aStoredDeclineIsReplayedEvenAfterTheSeatIsFreed() {
         UUID show = shows.create("idem-06", "A", 10, 100, 4);
         Api.Response bobHold = reserve.seats(show, bob, Reserve.newKey(), "A1");
-        String bobReservation = bobHold.json().path("reservationId").asText();
+        UUID bobReservation = UUID.fromString(bobHold.json().path("reservationId").asText());
 
         String key = Reserve.newKey();
         Api.Response declined = reserve.seats(show, alice, key, "A1");
         assertThat(declined.status()).isEqualTo(409);
         assertThat(declined.code()).isEqualTo("SEAT_UNAVAILABLE");
 
-        releaseDirectly(show, bobReservation);
+        assertThat(cancel.of(bobReservation, bob).status()).isEqualTo(200);
 
         Api.Response replay = reserve.seats(show, alice, key, "A1");
         assertThat(replay.status()).isEqualTo(409);
@@ -159,15 +162,17 @@ class IdempotencyIT extends AbstractPostgresIT {
         UUID show = shows.create("idem-09", "A", 10, 100, 4);
         String key = Reserve.newKey();
         Api.Response created = reserve.seats(show, alice, key, "A1");
-        String reservationId = created.json().path("reservationId").asText();
+        UUID reservationId = UUID.fromString(created.json().path("reservationId").asText());
 
-        releaseDirectly(show, reservationId);
+        assertThat(cancel.of(reservationId, alice).status()).isEqualTo(200);
 
         Api.Response replay = reserve.seats(show, alice, key, "A1");
         assertThat(replay.status()).isEqualTo(201);
         assertThat(replay.json().path("status").asText()).isEqualTo("CONFIRMED");
         assertThat(replay.body()).isEqualTo(created.body());
         assertThat(Reserve.wasReplayed(replay)).isTrue();
+        assertThat(jdbc.queryForObject("SELECT status FROM reservations WHERE id = ?", String.class,
+                reservationId)).isEqualTo("CANCELLED");
     }
 
     @Test
@@ -178,23 +183,6 @@ class IdempotencyIT extends AbstractPostgresIT {
         reserve.seats(show, alice, Reserve.newKey(), "Z9");
 
         reconciliation.assertEveryCommittedIdempotencyRecordHasAResponse();
-    }
-
-    /** Frees seats without going through cancel, which does not exist yet. */
-    private void releaseDirectly(UUID showId, String reservationId) {
-        UUID reservation = UUID.fromString(reservationId);
-        int seatCount = jdbc.queryForObject(
-                "SELECT seat_count FROM reservations WHERE id = ?", Integer.class, reservation);
-        String userId = jdbc.queryForObject(
-                "SELECT user_id FROM reservations WHERE id = ?", String.class, reservation);
-        jdbc.update("UPDATE seats SET status = 'AVAILABLE', reservation_id = NULL "
-                + "WHERE reservation_id = ?", reservation);
-        jdbc.update("UPDATE reservation_seats SET released_at = now() WHERE reservation_id = ?",
-                reservation);
-        jdbc.update("UPDATE reservations SET status = 'CANCELLED', cancelled_at = now() "
-                + "WHERE id = ?", reservation);
-        jdbc.update("UPDATE user_show_quotas SET seats_held = seats_held - ? "
-                + "WHERE show_id = ? AND user_id = ?", seatCount, showId, userId);
     }
 
     private int reservationCount(UUID showId) {

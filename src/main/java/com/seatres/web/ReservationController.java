@@ -4,8 +4,10 @@ import com.seatres.domain.ReserveCommand;
 import com.seatres.domain.ReserveOutcome;
 import com.seatres.error.ApiException;
 import com.seatres.error.ErrorCode;
+import com.seatres.service.CancellationService;
 import com.seatres.service.RequestFingerprinter;
 import com.seatres.service.ReservationService;
+import com.seatres.web.dto.ReservationResponse;
 import com.seatres.web.dto.ReserveRequest;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -30,11 +32,13 @@ public class ReservationController {
     private static final Pattern KEY_PATTERN = Pattern.compile("^[A-Za-z0-9_.:-]{1,128}$");
 
     private final ReservationService reservationService;
+    private final CancellationService cancellationService;
     private final RequestFingerprinter fingerprinter;
 
     public ReservationController(ReservationService reservationService,
-            RequestFingerprinter fingerprinter) {
+            CancellationService cancellationService, RequestFingerprinter fingerprinter) {
         this.reservationService = reservationService;
+        this.cancellationService = cancellationService;
         this.fingerprinter = fingerprinter;
     }
 
@@ -50,6 +54,13 @@ public class ReservationController {
 
         ReserveOutcome outcome = reservationService.reserve(command);
         return respond(outcome, outcome instanceof ReserveOutcome.Replayed);
+    }
+
+    /** No consumes and no body parameter, so any body and any content type are ignored. */
+    @PostMapping("/reservations/{reservationId}/cancel")
+    ReservationResponse cancel(@PathVariable UUID reservationId,
+            @AuthenticationPrincipal Jwt jwt) {
+        return cancellationService.cancel(reservationId, jwt.getSubject());
     }
 
     /** The body is already bound and validated by now, so a bad body is reported before a bad key. */

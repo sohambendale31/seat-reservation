@@ -3,12 +3,12 @@
 A JSON HTTP API for reserving assigned seats for shows. It stays correct when thousands of users
 try to reserve the same seats at the same time.
 
-> **Status:** phases P0–P3 of [specs/08-implementation-plan.md](specs/08-implementation-plan.md) are
-> implemented and verified: `POST /auth/token`, `POST /shows`, `GET /shows/{id}` and
-> `POST /shows/{id}/reserve` all work, and `./mvnw verify` plus `docker compose up` are green.
-> **Not built yet:** cancel (P4), the custom metrics and the seats gauge (P5), the burst script (P6)
-> and the deployment (P7) — so the cancel, metrics and burst sections below still describe target
-> behaviour. Deployed URL: ⟪TBD: deployed URL⟫.
+> **Status:** phases P0–P4 of [specs/08-implementation-plan.md](specs/08-implementation-plan.md) are
+> implemented and verified, so the whole API below works: tokens, show creation, show reads,
+> reserve and cancel. `./mvnw verify` and `docker compose up` are green.
+> **Not built yet:** the custom metrics and the seats gauge (P5), the burst script (P6) and the
+> deployment (P7) — so the metrics and burst sections below still describe target behaviour.
+> Deployed URL: ⟪TBD: deployed URL⟫.
 
 ## Guarantees
 
@@ -110,7 +110,7 @@ secret is never shared. `java scripts/MintToken.java` still works offline if you
 | POST | `/shows` | ADMIN |
 | GET | `/shows/{id}` | USER/ADMIN |
 | POST | `/shows/{id}/reserve` (header `Idempotency-Key` required) | USER |
-| POST | `/reservations/{id}/cancel` | USER (owner) — *not implemented yet (P4)* |
+| POST | `/reservations/{id}/cancel` | USER (owner) |
 | GET | `/livez`, `/readyz`, `/actuator/prometheus` | public |
 
 ```bash

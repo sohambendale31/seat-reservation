@@ -43,6 +43,11 @@ public final class Api {
                 .POST(bodyOf(body)));
     }
 
+    /** No Content-Type at all, for endpoints that must not require one. */
+    public Response postWithoutContentType(String path, String bearerToken, String body) {
+        return send(request(path, bearerToken, Map.of()).POST(bodyOf(body)));
+    }
+
     public Response postWithContentType(String path, String bearerToken, String body,
             String contentType) {
         return send(request(path, bearerToken, Map.of())

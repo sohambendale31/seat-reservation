@@ -131,13 +131,15 @@ in both reports `VALIDATION_FAILED` rather than the key error (`01` §4.3).
 
 | ID | Test | Expected |
 |---|---|---|
-| IT-CAN-01 | Owner cancels | 200 `CANCELLED` with `cancelledAt` set; seats AVAILABLE; quota decremented; `reservation_seats.released_at` set |
+| IT-CAN-01 | Owner cancels | 200 `CANCELLED` with `cancelledAt` set; seats AVAILABLE; quota decremented; `reservation_seats.released_at` set; the response's seats come from the surviving links |
 | IT-CAN-02 | Cancel twice | The second call returns 200 with the same `cancelledAt` |
-| IT-CAN-03 | Non-owner cancels | 404 `RESERVATION_NOT_FOUND`; nothing changes |
+| IT-CAN-03 | Non-owner cancels | 404 `RESERVATION_NOT_FOUND`; nothing changes (the reservation stays CONFIRMED and the owner's quota is untouched) |
 | IT-CAN-04 | Unknown / malformed id | 404 / 400 |
 | IT-CAN-05 | Cancel, someone else reserves the seat, then the original owner cancels again | The third party keeps the seat; the owner gets a 200 no-op |
 | IT-CAN-06 | Cancel restores quota | Hold 4 → cancel a 2-seat reservation → reserve 2 more → 201 |
 | IT-CAN-07 | Cancel with a `text/plain` body | 200 `CANCELLED`; the body and `Content-Type` are ignored (no 415) |
+| IT-CAN-08 | Cancel one of a user's two reservations in the same show | Only that reservation's seats are released; the other stays CONFIRMED; the quota drops by exactly the cancelled seat count |
+| IT-CAN-09 | Cancel without a token / with an ADMIN-only token | 401 / 403; the reservation stays CONFIRMED |
 
 ### 3.7 Failure handling
 

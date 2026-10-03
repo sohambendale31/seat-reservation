@@ -86,12 +86,16 @@ fail first.
 
 Done when: T2 passes in 5 of 5 runs, with no deadlocks, and AUTH-06/AUTH-07 pass.
 
-### P4: Cancel (≈ 0.75 h)
+### P4: Cancel (≈ 0.75 h) — **done**
 
 1. Tests first: IT-CAN-01..07, CT-06, CT-07.
 2. `CancellationService` per `04` §6 (C1–C8), with assertions.
+3. Also landed: `ReservationResponse` gained a nullable `cancelledAt` (omitted on reserve by
+   non-null inclusion), and IT-IDEM-06/09 were switched from hand-written release SQL to the real
+   cancel endpoint now that it exists.
 
-Done when: all of the above pass and R1–R7 return no rows after each test.
+Done when: all of the above pass, and reconciliation R1–R6 return no rows for the test's show with
+R7 clean, after each test.
 
 ### P5: Observability (≈ 0.75 h)
 

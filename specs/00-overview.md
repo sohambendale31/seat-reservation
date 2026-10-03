@@ -1,8 +1,9 @@
 # 00 — Overview: Concurrency-Safe Seat Reservation Service
 
-> Status: **Phases P0–P3 implemented** (scaffold and schema, error model and security, shows and
-> transaction plumbing, reserve and idempotency). Cancel, observability, the burst script and the
-> deployment are still pending, so no claim is made here about load results or a deployed URL.
+> Status: **Phases P0–P4 implemented** (scaffold and schema, error model and security, shows and
+> transaction plumbing, reserve and idempotency, cancel) — every endpoint in `02` §1 now works.
+> Observability, the burst script and the deployment are still pending, so no claim is made here
+> about load results or a deployed URL.
 > Measured numbers belong in `WRITEUP.md`, backed by committed evidence. Implementation decisions
 > that refined this specification are recorded in ADR-024.
 

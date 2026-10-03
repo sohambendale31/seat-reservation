@@ -2,7 +2,6 @@ package com.seatres.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.seatres.domain.ReservationStatus;
 import com.seatres.domain.ReserveCommand;
 import com.seatres.domain.ReserveOutcome;
 import com.seatres.domain.SeatRow;
@@ -133,8 +132,8 @@ public class ReservationService {
         }
         quotas.adjust(command.showId(), command.userId(), command.seatCount());
 
-        String body = json(new ReservationResponse(reservationId, command.showId(),
-                ReservationStatus.CONFIRMED, reservedSeats(locked), totalPaise, createdAt));
+        String body = json(ReservationResponse.confirmed(reservationId, command.showId(),
+                reservedSeats(locked), totalPaise, createdAt));
         idempotency.complete(recordId, 201, body);
         return new ReserveOutcome.Confirmed(body);
     }

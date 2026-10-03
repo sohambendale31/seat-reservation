@@ -42,6 +42,20 @@ public class SeatJdbcRepository {
             FOR UPDATE
             """;
 
+    private static final String LOCK_BY_RESERVATION = """
+            SELECT id
+            FROM seats
+            WHERE reservation_id = :reservationId
+            ORDER BY id
+            FOR UPDATE
+            """;
+
+    private static final String RELEASE = """
+            UPDATE seats
+            SET status = 'AVAILABLE', reservation_id = NULL
+            WHERE reservation_id = :reservationId AND status = 'CONFIRMED'
+            """;
+
     private static final String CONFIRM = """
             UPDATE seats
             SET status = 'CONFIRMED', reservation_id = :reservationId
@@ -114,6 +128,18 @@ public class SeatJdbcRepository {
                 .addValue("showId", showId)
                 .addValue("seatIds", seatIds)
                 .addValue("reservationId", reservationId));
+    }
+
+    public List<Long> lockByReservation(UUID reservationId) {
+        Tx.requireActive();
+        return jdbc.queryForList(LOCK_BY_RESERVATION,
+                new MapSqlParameterSource("reservationId", reservationId), Long.class);
+    }
+
+    /** Releases only seats this reservation still holds, so a re-reserved seat is never stolen. */
+    public int release(UUID reservationId) {
+        Tx.requireActive();
+        return jdbc.update(RELEASE, new MapSqlParameterSource("reservationId", reservationId));
     }
 
     public record NewSeat(String label, long pricePaise) {}
