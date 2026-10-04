@@ -17,6 +17,7 @@ integer **paise** (`long`) of INR.
 | GET | `/readyz` | Public | — | 200 / 503 |
 | GET | `/actuator/health` | Public (status only, no details) | — | 200 / 503 |
 | GET | `/actuator/prometheus` | Public | — | 200 |
+| GET | `/actuator` | Public (index of the two exposed endpoints only) | — | 200 |
 | GET | `/` | Public | — | 302 to the Swagger UI |
 | GET | `/swagger-ui.html`, `/swagger-ui/**` | Public | — | 200 (interactive docs) |
 | GET | `/v3/api-docs`, `/v3/api-docs/**` | Public | — | 200 (OpenAPI document) |

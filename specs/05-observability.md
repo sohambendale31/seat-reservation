@@ -63,6 +63,7 @@ management:
 |---|---|
 | `/livez`, `/readyz` (and `/actuator/health`) | Public; status only (`show-details: never`) |
 | `/actuator/prometheus` | Public. It exposes only aggregate counters and gauges with the bounded labels below: no identifiers, no request data. In a real production setup, restrict it at the network level (internal port or IP allow-list). |
+| `/actuator` | Public. The index lists only the two exposed endpoints, so it reveals nothing further. It exists so the API docs can link to them rather than advertise a path that answers 401 |
 | All other actuator endpoints | Not exposed (`env`, `beans`, `heapdump`, `threaddump`, `loggers`, `configprops`, …) |
 
 ## 4. Metric catalogue
@@ -177,6 +178,18 @@ Expected relations since the process started (counters reset on restart; use
 
 - Format: Spring Boot built-in structured logging, ECS JSON on stdout
   (`logging.structured.format.console: ecs`) in all profiles.
+- **Who can read them.** Logs go to stdout and are collected by the host, so there is deliberately no
+  HTTP endpoint serving them: that would publish request ids and user references to anyone. Someone
+  without console access reads the full capture committed under `docs/evidence/`, or quotes the
+  `X-Request-Id` from their own response so an operator can find the line.
+- **Under burst the log stream is lossy, and the console cannot return a full burst.** One INFO line
+  per decline exceeds a host's ingestion limit during an on-sale: Railway drops above ~500/sec per
+  replica, measured at 305 req/s and above. Retrieval is capped too (5,000 lines), so a
+  20,000-request run cannot be read back from the console however it is captured. This is the
+  practical reason for §1's rule that metrics, not logs, are the authoritative count. A deployment
+  that needs complete logs ships them to an external sink through a log drain; a deployment that
+  needs less volume samples or demotes `reservation.declined`. `docs/evidence/` holds both a
+  deployed capture and a verified-complete 20,000-line capture from the local stack.
 - MDC keys (added by `RequestIdFilter` and the services, cleared in `finally`):
 
 | Key | Value | Notes |

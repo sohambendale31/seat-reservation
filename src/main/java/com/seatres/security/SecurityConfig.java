@@ -25,7 +25,7 @@ public class SecurityConfig {
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.POST, "/auth/token").permitAll()
-                        .requestMatchers("/livez", "/readyz", "/actuator/health",
+                        .requestMatchers("/livez", "/readyz", "/actuator", "/actuator/health",
                                 "/actuator/health/**", "/actuator/prometheus").permitAll()
                         // The only paths exempted from the fail-closed rule below: the API docs and
                         // the redirect that takes the bare URL to them.

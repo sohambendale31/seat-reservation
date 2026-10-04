@@ -68,6 +68,9 @@ spring:
     problemdetails:
       enabled: true
 
+springdoc:
+  show-actuator: true          # list the public health and metrics endpoints in the API docs
+
 logging:
   structured:
     format:

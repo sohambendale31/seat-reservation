@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.seatres.support.AbstractPostgresIT;
 import com.seatres.support.Api;
 import com.seatres.support.TestTokens;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -78,6 +79,30 @@ class OpenApiIT extends AbstractPostgresIT {
                 .doesNotContain("test-only-admin-key")
                 .doesNotContain(TestTokens.SECRET)
                 .doesNotContain("local-dev-only");
+    }
+
+    @Test
+    void theOperationalEndpointsAreDocumentedAndActuallyReachable() {
+        JsonNode paths = api.get("/v3/api-docs", null).json().path("paths");
+
+        assertThat(paths.has("/actuator/prometheus")).isTrue();
+        assertThat(paths.has("/actuator/health")).isTrue();
+        for (String path : List.of("/actuator", "/actuator/health", "/actuator/prometheus")) {
+            assertThat(api.get(path, null).status()).as(path).isEqualTo(200);
+        }
+        // An eagerly registered counter: the seats gauge emits nothing until a show exists.
+        assertThat(api.get("/actuator/prometheus", null).body())
+                .contains("seatres_reservations_confirmed_total");
+    }
+
+    /** The index must not reveal anything that is not already public. */
+    @Test
+    void theActuatorIndexListsOnlyThePublicEndpoints() {
+        String index = api.get("/actuator", null).body();
+
+        assertThat(index).contains("health").contains("prometheus");
+        assertThat(index).doesNotContain("\"env\"").doesNotContain("beans")
+                .doesNotContain("heapdump").doesNotContain("threaddump");
     }
 
     /** Opening the docs must not open anything else. */

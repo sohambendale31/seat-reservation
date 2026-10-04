@@ -41,7 +41,11 @@ public final class BurstTest {
 
     private BurstTest(Config config) {
         this.config = config;
+        // HTTP/1.1 on purpose: over TLS the client would negotiate HTTP/2 and multiplex every
+        // request onto one connection, so the concurrency below would serialize behind that
+        // connection's stream limit. HTTP/1.1 opens a connection per in-flight request instead.
         this.http = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(Duration.ofSeconds(20))
                 .executor(Executors.newVirtualThreadPerTaskExecutor())
                 .build();

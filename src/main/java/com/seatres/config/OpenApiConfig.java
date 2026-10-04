@@ -44,6 +44,12 @@ public class OpenApiConfig implements WebMvcConfigurer {
             4. `GET /shows/{showId}` shows the seat map, `POST /shows/{showId}/reserve` books seats
             from it, and `POST /reservations/{reservationId}/cancel` gives them back.
 
+            **Metrics and health** are public and need no token: `/actuator/prometheus` for the
+            Prometheus scrape (including seats per show), `/actuator/health`, `/livez` and
+            `/readyz`. Logs are written to stdout in ECS JSON and are read from the host's console,
+            so they are not reachable over HTTP; the full captured history is committed under
+            `docs/evidence/`.
+
             The admin key is not published here; ask whoever runs this service if you need it.
             This is a demonstration service with a stand-in
             login: anyone can get a token for any name, so treat everything in it as throwaway

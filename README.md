@@ -10,7 +10,7 @@ try to reserve the same seats at the same time.
 > The burst script runs green against the local stack, including a 20,000-request run with
 > **0 × 5xx**; raw output is in [docs/evidence/](docs/evidence/).
 > **Not built yet:** the deployment (P7), so the deployed-URL commands below cannot be run yet.
-> Deployed URL: ⟪TBD: deployed URL⟫.
+> Live URL: https://seat-reservation-production-6d97.up.railway.app
 
 ## Guarantees
 
@@ -186,18 +186,66 @@ answers 502 (a 5xx), deployments overlap (doubling database connections), and th
 only at deploy time. Steps, the `railway.json` to commit, limitations, and a verification checklist
 are in [specs/07-deployment.md §7](specs/07-deployment.md).
 
-Deployed URL: ⟪TBD: deployed URL⟫
+Live URL: <https://seat-reservation-production-6d97.up.railway.app>
 
 ## Metrics and logs
 
-- `/actuator/prometheus` exposes `seatres_reservations_confirmed_total`,
-  `seatres_reservation_declines_total{reason}`, `seatres_idempotency_replays_total{status}`,
-  `seatres_invariant_violations_total{check}`, and `seatres_seats{show_id,status}`, plus the
-  HTTP/Hikari/JVM metrics. Idempotent replays are never counted as new confirmations.
-- `seatres_seats` is per show for the 20 newest shows, read from PostgreSQL at scrape time over a
-  dedicated 2-connection pool, so it matches `GET /shows/{id}` even during a burst (ADR-023).
-- Logs are ECS JSON on stdout with `requestId` (`X-Request-Id`). Tokens, secrets, raw idempotency
-  keys, and raw user ids are never logged.
+### Metrics — public, no token needed
+
+| URL | What it gives you |
+|---|---|
+| [`/actuator/prometheus`](https://seat-reservation-production-6d97.up.railway.app/actuator/prometheus) | The full Prometheus scrape |
+| [`/actuator/health`](https://seat-reservation-production-6d97.up.railway.app/actuator/health), [`/livez`](https://seat-reservation-production-6d97.up.railway.app/livez), [`/readyz`](https://seat-reservation-production-6d97.up.railway.app/readyz) | Liveness and readiness |
+| [`/actuator`](https://seat-reservation-production-6d97.up.railway.app/actuator) | Index of the two exposed endpoints |
+
+They are also listed in the Swagger UI, so they are reachable from the live URL without reading this
+file. Everything else under `/actuator` is unexposed and answers 401/404.
+
+The custom meters are `seatres_reservations_confirmed_total`,
+`seatres_reservation_declines_total{reason}`, `seatres_idempotency_replays_total{status}`,
+`seatres_invariant_violations_total{check}`, and `seatres_seats{show_id,status}`. Idempotent replays
+are never counted as new confirmations. `seatres_seats` covers the 20 newest shows and is read from
+PostgreSQL at scrape time, so it matches `GET /shows/{id}` even during a burst (ADR-023). It emits
+no series until at least one show exists.
+
+A quick way to watch a show while you load it:
+
+```bash
+curl -s https://seat-reservation-production-6d97.up.railway.app/actuator/prometheus | grep seatres_
+```
+
+### Logs — stdout, so read them from the host or from this repo
+
+Logs are ECS JSON on stdout, which the host collects; there is deliberately **no HTTP endpoint that
+serves them**, since that would publish user references and request ids to anyone. Three ways to see
+them:
+
+1. **Committed log captures**, for anyone without console access:
+   - [`deployed-logs-2026-10-04.txt`](docs/evidence/deployed-logs-2026-10-04.txt) — 5,000 lines from
+     the live service, covering the L-3 and L-4 runs. That is everything Railway will return.
+   - [`local-20k-full-logs-2026-10-04.txt`](docs/evidence/local-20k-full-logs-2026-10-04.txt) — the
+     **complete** log set for a 20,000-request burst: 20,000 lines for 20,000 requests, verified
+     against the server's own counters, nothing dropped. Captured from the local stack, because
+     Railway cannot return a set this size (see the note below).
+   - [`deployed-build-log-2026-10-04.txt`](docs/evidence/deployed-build-log-2026-10-04.txt) — build log.
+2. **With access to the host:** `railway logs --lines 5000` (or the service's Logs tab).
+3. **Correlate a specific call:** every response carries `X-Request-Id`, and every error body repeats
+   it as `requestId`. Quote that id and it can be found in the logs.
+
+Each line carries `requestId`, plus `showId`, `userRef` and `idemKeyRef` where they apply. `userRef`
+and `idemKeyRef` are SHA-256 prefixes: the raw subject and the raw idempotency key are never logged,
+and neither are tokens, the `Authorization` header, the admin key, or request bodies.
+
+Events worth grepping: `reservation.confirmed`, `reservation.declined`, `reservation.replayed`,
+`reservation.cancelled`, `db.transient_failure`, `db.outcome_unknown`, `invariant.violation`.
+
+> **Why the deployed logs are incomplete under load.** Two independent caps, both the platform's:
+> Railway *drops* application logs above ~500/sec per replica (it says so inline), and `railway logs`
+> will only ever *return* 5,000 lines — `--lines 10000` is rejected, and redirecting its streaming
+> form to a file yields a 500-line snapshot. A 20,000-request burst therefore cannot be captured
+> from the console at all. The metrics are aggregates and stay exact, which is why they, not the
+> logs, are the authoritative count. A deployment that needs complete logs should ship them to an
+> external sink via a log drain rather than read them from the console.
 
 ## Write-up
 

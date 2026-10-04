@@ -1,0 +1,153 @@
+Deployed burst evidence — raw BurstTest.java output, unedited.
+
+Environment
+  date         2026-10-04T12:32:32Z
+  target       https://seat-reservation-production-6d97.up.railway.app (Railway)
+  host config  railway.json: numReplicas 1, sleepApplication false, healthcheck /readyz,
+               drainingSeconds 25, overlapSeconds 0, restartPolicy ON_FAILURE
+  app config   DB_POOL_MAX_SIZE default 20, profile prod
+  generator    Darwin arm64, 10 CPUs, openjdk version "21.0.12.1" 2026-08-18
+  commit       9415d66 plus the HTTP/1.1 pin in BurstTest.java
+
+  caveat  The generator is a laptop on the public internet. Per-request latency is
+          dominated by the WAN round-trip (p50 ~0.75 s to this region), so the rates
+          below measure the client's concurrency against that latency, not the
+          server's capacity. Server-side the pool stayed idle throughout.
+
+==========================================================================
+L-3  java scripts/BurstTest.java --scenario all --concurrency 200
+==========================================================================
+target=https://seat-reservation-production-6d97.up.railway.app runId=20261004T123232-9535 concurrency=200
+
+=== scenario: hot-seat  show=86473f42-8f62-4e41-935f-a8c3e071df05  users=500  concurrency=200 ===
+HTTP outcomes (first attempt)
+  201 Created ........................... 1
+  409 SEAT_UNAVAILABLE .................. 499
+  409 USER_LIMIT_EXCEEDED ............... 0
+  409 IDEMPOTENCY_KEY_REUSED ............ 0
+  other 4xx ............................. 0   {}
+  5xx ................................... 0   {}
+  timeouts .............................. 0
+  transport errors ...................... 0
+  replayed (Idempotent-Replayed: true) .. 0
+After ambiguity resolution
+  resolved ............................... 0   unresolved ... 0
+Logical outcome
+  distinct reservations (client) ........ 1
+  seats confirmed (client) .............. 1
+  seats confirmed (server GET) .......... 1
+Latency (ms, first attempt, all responses)  p50=1469  p95=1975  p99=2175  max=2515
+Wall time .............................. 4.1 s   achieved rate 121 req/s
+Reconcile: total=10 available=9 held=0 confirmed=1  invariant=OK
+ASSERTIONS: PASS
+SUMMARY {"scenario":"hot-seat","runId":"20261004T123232-9535","baseUrl":"https://seat-reservation-production-6d97.up.railway.app","show":"86473f42-8f62-4e41-935f-a8c3e071df05","users":500,"concurrency":200,"requests":500,"created":1,"seatUnavailable":499,"userLimitExceeded":0,"keyReused":0,"other4xx":0,"serverErrors":0,"timeouts":0,"transportErrors":0,"replayed":0,"resolved":0,"unresolved":0,"logicalReservations":1,"clientSeats":1,"serverSeats":1,"p50Ms":1469,"p95Ms":1975,"p99Ms":2175,"maxMs":2515,"wallSeconds":4.1,"ratePerSecond":121,"total":10,"available":9,"held":0,"confirmed":1,"pass":true}
+
+=== scenario: pool-burst  show=e8394b15-66ec-438a-867d-5fc029fa3dd2  users=2000  concurrency=200 ===
+HTTP outcomes (first attempt)
+  201 Created ........................... 650
+  409 SEAT_UNAVAILABLE .................. 17074
+  409 USER_LIMIT_EXCEEDED ............... 2276
+  409 IDEMPOTENCY_KEY_REUSED ............ 0
+  other 4xx ............................. 0   {}
+  5xx ................................... 0   {}
+  timeouts .............................. 0
+  transport errors ...................... 0
+  replayed (Idempotent-Replayed: true) .. 0
+After ambiguity resolution
+  resolved ............................... 0   unresolved ... 0
+Logical outcome
+  distinct reservations (client) ........ 650
+  seats confirmed (client) .............. 998
+  seats confirmed (server GET) .......... 998
+Latency (ms, first attempt, all responses)  p50=321  p95=479  p99=688  max=1319
+Wall time .............................. 34.7 s   achieved rate 576 req/s
+Reconcile: total=1000 available=2 held=0 confirmed=998  invariant=OK
+ASSERTIONS: PASS
+SUMMARY {"scenario":"pool-burst","runId":"20261004T123232-9535","baseUrl":"https://seat-reservation-production-6d97.up.railway.app","show":"e8394b15-66ec-438a-867d-5fc029fa3dd2","users":2000,"concurrency":200,"requests":20000,"created":650,"seatUnavailable":17074,"userLimitExceeded":2276,"keyReused":0,"other4xx":0,"serverErrors":0,"timeouts":0,"transportErrors":0,"replayed":0,"resolved":0,"unresolved":0,"logicalReservations":650,"clientSeats":998,"serverSeats":998,"p50Ms":321,"p95Ms":479,"p99Ms":688,"maxMs":1319,"wallSeconds":34.7,"ratePerSecond":576,"total":1000,"available":2,"held":0,"confirmed":998,"pass":true}
+
+=== scenario: same-key  show=a4dd824c-01a7-48c9-86e2-c4e0e6068f46  users=1  concurrency=200 ===
+HTTP outcomes (first attempt)
+  201 Created ........................... 60
+  409 SEAT_UNAVAILABLE .................. 0
+  409 USER_LIMIT_EXCEEDED ............... 0
+  409 IDEMPOTENCY_KEY_REUSED ............ 10
+  other 4xx ............................. 0   {}
+  5xx ................................... 0   {}
+  timeouts .............................. 0
+  transport errors ...................... 0
+  replayed (Idempotent-Replayed: true) .. 58
+After ambiguity resolution
+  resolved ............................... 0   unresolved ... 0
+Logical outcome
+  distinct reservations (client) ........ 2
+  seats confirmed (client) .............. 3
+  seats confirmed (server GET) .......... 3
+Latency (ms, first attempt, all responses)  p50=398  p95=410  p99=415  max=415
+Wall time .............................. 0.8 s   achieved rate 91 req/s
+Reconcile: total=10 available=7 held=0 confirmed=3  invariant=OK
+ASSERTIONS: PASS
+SUMMARY {"scenario":"same-key","runId":"20261004T123232-9535","baseUrl":"https://seat-reservation-production-6d97.up.railway.app","show":"a4dd824c-01a7-48c9-86e2-c4e0e6068f46","users":1,"concurrency":200,"requests":70,"created":60,"seatUnavailable":0,"userLimitExceeded":0,"keyReused":10,"other4xx":0,"serverErrors":0,"timeouts":0,"transportErrors":0,"replayed":58,"resolved":0,"unresolved":0,"logicalReservations":2,"clientSeats":3,"serverSeats":3,"p50Ms":398,"p95Ms":410,"p99Ms":415,"maxMs":415,"wallSeconds":0.8,"ratePerSecond":91,"total":10,"available":7,"held":0,"confirmed":3,"pass":true}
+
+=== scenario: user-limit  show=9b97f59c-220e-48bc-a9f3-eecae0546974  users=1  concurrency=200 ===
+HTTP outcomes (first attempt)
+  201 Created ........................... 4
+  409 SEAT_UNAVAILABLE .................. 0
+  409 USER_LIMIT_EXCEEDED ............... 6
+  409 IDEMPOTENCY_KEY_REUSED ............ 0
+  other 4xx ............................. 0   {}
+  5xx ................................... 0   {}
+  timeouts .............................. 0
+  transport errors ...................... 0
+  replayed (Idempotent-Replayed: true) .. 0
+After ambiguity resolution
+  resolved ............................... 0   unresolved ... 0
+Logical outcome
+  distinct reservations (client) ........ 4
+  seats confirmed (client) .............. 4
+  seats confirmed (server GET) .......... 4
+Latency (ms, first attempt, all responses)  p50=385  p95=416  p99=416  max=416
+Wall time .............................. 0.4 s   achieved rate 24 req/s
+Reconcile: total=10 available=6 held=0 confirmed=4  invariant=OK
+ASSERTIONS: PASS
+SUMMARY {"scenario":"user-limit","runId":"20261004T123232-9535","baseUrl":"https://seat-reservation-production-6d97.up.railway.app","show":"9b97f59c-220e-48bc-a9f3-eecae0546974","users":1,"concurrency":200,"requests":10,"created":4,"seatUnavailable":0,"userLimitExceeded":6,"keyReused":0,"other4xx":0,"serverErrors":0,"timeouts":0,"transportErrors":0,"replayed":0,"resolved":0,"unresolved":0,"logicalReservations":4,"clientSeats":4,"serverSeats":4,"p50Ms":385,"p95Ms":416,"p99Ms":416,"maxMs":416,"wallSeconds":0.4,"ratePerSecond":24,"total":10,"available":6,"held":0,"confirmed":4,"pass":true}
+
+==========================================================================
+L-4  java scripts/BurstTest.java --scenario pool-burst --requests 20000 --concurrency 300
+==========================================================================
+target=https://seat-reservation-production-6d97.up.railway.app runId=20261004T123346-472b concurrency=300
+
+=== scenario: pool-burst  show=0a00436e-d68a-49b6-89cd-40349c28f4cc  users=2000  concurrency=300 ===
+HTTP outcomes (first attempt)
+  201 Created ........................... 639
+  409 SEAT_UNAVAILABLE .................. 17032
+  409 USER_LIMIT_EXCEEDED ............... 2329
+  409 IDEMPOTENCY_KEY_REUSED ............ 0
+  other 4xx ............................. 0   {}
+  5xx ................................... 0   {}
+  timeouts .............................. 0
+  transport errors ...................... 0
+  replayed (Idempotent-Replayed: true) .. 0
+After ambiguity resolution
+  resolved ............................... 0   unresolved ... 0
+Logical outcome
+  distinct reservations (client) ........ 639
+  seats confirmed (client) .............. 998
+  seats confirmed (server GET) .......... 998
+Latency (ms, first attempt, all responses)  p50=363  p95=572  p99=1223  max=2641
+Wall time .............................. 26.5 s   achieved rate 754 req/s
+Reconcile: total=1000 available=2 held=0 confirmed=998  invariant=OK
+ASSERTIONS: PASS
+SUMMARY {"scenario":"pool-burst","runId":"20261004T123346-472b","baseUrl":"https://seat-reservation-production-6d97.up.railway.app","show":"0a00436e-d68a-49b6-89cd-40349c28f4cc","users":2000,"concurrency":300,"requests":20000,"created":639,"seatUnavailable":17032,"userLimitExceeded":2329,"keyReused":0,"other4xx":0,"serverErrors":0,"timeouts":0,"transportErrors":0,"replayed":0,"resolved":0,"unresolved":0,"logicalReservations":639,"clientSeats":998,"serverSeats":998,"p50Ms":363,"p95Ms":572,"p99Ms":1223,"maxMs":2641,"wallSeconds":26.5,"ratePerSecond":754,"total":1000,"available":2,"held":0,"confirmed":998,"pass":true}
+
+==========================================================================
+Notes recorded at the time of these runs
+==========================================================================
+- Server side during both runs: hikaricp_connections_active 0 and _pending 0 between
+  scenarios, no http_server_requests with a 5xx status, and
+  seatres_invariant_violations_total 0 for both checks.
+- The generator pins HTTP/1.1. Over TLS the JDK client otherwise negotiates HTTP/2 and
+  multiplexes every request onto one connection, which serialised the burst to about
+  1 req/s while the server sat idle. specs/06 section 6 already assumed HTTP/1.1.
+- Railway drops application logs above 500/sec per replica. During the 20k runs it
+  reported dropped messages, because the service logs one INFO line per decline.
+  Metrics are unaffected and remain the authoritative count; see WRITEUP.
