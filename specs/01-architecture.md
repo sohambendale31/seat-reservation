@@ -18,7 +18,7 @@
 | Build | Maven **3.9.16** via Maven Wrapper (`./mvnw`, `distributionType=only-script`, so no wrapper jar is committed) | Surefire runs unit tests (`*Test`); Failsafe runs integration tests (`*IT`) |
 | Container | Docker multi-stage build: `eclipse-temurin:21-jdk` → `eclipse-temurin:21-jre` | Pinned by tag and digest (§1.1) |
 | Local orchestration | Docker Compose v2 | `postgres:16-alpine`, pinned by digest (§1.1) |
-| Hosting | Render (primary recommendation) | See `07` |
+| Hosting | Railway (Docker service + Railway PostgreSQL) | See `07` §7; ADR-026 |
 
 ### 1.1 Dependency versions policy
 
@@ -426,7 +426,11 @@ flowchart LR
 
 - Local: Docker Compose (`postgres`, `app`).
 - Hosted: one container instance (≥ 1 GiB RAM recommended) and managed PostgreSQL in the same
-  provider/region. Host health check path `/livez` (ADR-019); `/readyz` is for external monitoring.
+  project, reached over the provider's private network.
+- The health-check path depends on how the host probes. Where probing is **continuous** and failure
+  restarts the instance, it must be `/livez` (ADR-019). On Railway, which probes **only at deploy
+  time**, the deploy check is `/readyz` so a release goes live only when it can serve (ADR-026).
+  Either way `/readyz` remains the endpoint for external monitoring.
 
 ## 9. Failure modes and recovery
 

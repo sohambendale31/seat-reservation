@@ -71,7 +71,9 @@ Target length: 4–7 pages, in a precise first-person engineering voice.
 
 ### 8. Reproducible load-test evidence
 - An environment table per run: machine/plan, CPU, RAM, DB plan, pool size, JVM flags, commit SHA,
-  resolved dependency versions, and PostgreSQL `SELECT version()`.
+  resolved dependency versions, and PostgreSQL `SELECT version()`. For the deployed runs, also the
+  host settings that were overridden from their defaults (`07` §7.2, ADR-026) and confirmation that
+  Serverless was off.
 - The exact commands used.
 - Results per scenario: the burst script's outcome table copied verbatim (201 / 409 by code /
   other 4xx / 5xx / timeouts / transport errors / replays), logical vs HTTP outcomes, latency

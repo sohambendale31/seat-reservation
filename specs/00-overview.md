@@ -122,7 +122,7 @@ In scope:
 | A-9 | Outcomes decided **inside** the reservation transaction (201, 404, 409 seat/limit, 422) are stored and replayed. Outcomes decided **before** the transaction (400/401/403/415) and 5xx are not stored. | Deterministic replays; a 5xx leaves no trace, so retries re-execute. |
 | A-10 | All amounts are INR, in paise. | Scope. |
 | A-11 | Max 10,000 seats per show, 200 rows, and 500 seats per row. | Bounded creation transaction and response size. |
-| A-12 | The hosting plan is chosen **by measurement**: it must absorb a ~20k burst with 0 × 5xx (run L-4). A free tier is not assumed to be always-on, persistent, or big enough. | The assignment grades zero 5xx under the evaluator's own burst; see `07` §7. |
+| A-12 | The host is **Railway** (ADR-026), and the plan is chosen **by measurement**: it must absorb a ~20k burst with 0 × 5xx (run L-4). No tier is assumed to be always-on, persistent, or big enough, and four Railway defaults must be overridden or they break stated guarantees. | The assignment grades zero 5xx under the evaluator's own burst; see `07` §7. |
 | A-13 | Tokens come from the demo endpoint `POST /auth/token`. USER tokens are free to obtain; ADMIN tokens need the admin key (`APP_AUTH_ADMIN_KEY`), which the developer shares privately with the evaluator and rotates afterwards. The JWT signing secret is never shared. `scripts/MintToken.java` remains for offline use. | The evaluator must be able to get tokens for many users with plain HTTP (ADR-021). |
 
 ## 8. Acceptance criteria

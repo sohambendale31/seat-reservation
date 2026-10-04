@@ -130,8 +130,10 @@ run.
 
 ### P7: Deployment (≈ 1 h)
 
-1. Create the Render PostgreSQL instance and Web Service (`07` §7.2) and set the env vars, including
-   `APP_AUTH_ADMIN_KEY`.
+1. Create the Railway project: a Docker service from the repo plus a PostgreSQL service (`07` §7.2).
+   Set the env vars, including `APP_AUTH_ADMIN_KEY`, and commit `railway.json` with the four
+   overridden defaults (ADR-026): `drainingSeconds: 25`, `overlapSeconds: 0`,
+   `healthcheckPath: /readyz`, and Serverless disabled.
 2. Deploy, then run items 3, 5–11 and 14 of the checklist in `07` §11.
 3. Run the burst against the deployed URL: `--scenario all --concurrency 200` (L-3), then the 20k
    `pool-burst` at concurrency 300 (L-4, mandatory). Save the output to
@@ -165,8 +167,9 @@ failure.
 | # | Risk | Likelihood | Impact | Mitigation / fallback |
 |---|---|---|---|---|
 | R-1 | Flaky concurrency tests | Medium | High | Latch start gates, generous timeouts, 5 consecutive runs; fix root causes, never loosen assertions |
-| R-2 | Hosted free tier sleeps or is too small | High | Medium | Paid starter instance for the evaluation window; document it; warm up first |
-| R-3 | DB `max_connections` too low on the hosted plan | Medium | Medium | Lower `DB_POOL_MAX_SIZE` (remember the +2 observability connections), or pick a bigger plan |
+| R-2 | Hosted service sleeps or is too small | High | **High** | Railway Serverless answers the first request after idle with a **502**, which is a 5xx and fails NFR-1 outright. Disable it for the evaluation window, warm up with `/readyz` plus one GET, and size the plan by measurement |
+| R-3 | DB `max_connections` too low on the hosted plan | Medium | Medium | Lower `DB_POOL_MAX_SIZE` (remember the +2 observability connections), or pick a bigger plan. Also allow for a redeploy overlap needing `2 × (pool + 2)` unless `overlapSeconds` is 0 (`07` §5) |
+| R-13 | The host SIGKILLs the container on redeploy | Medium | Medium | Railway's draining grace is 0 by default, which severs in-flight transactions. `drainingSeconds: 25` (ADR-026); PostgreSQL rolls back the severed transaction and the client's retry replays it |
 | R-4 | Virtual-thread pinning or unexpected blocking | Low | Medium | Fall back to `spring.threads.virtual.enabled=false` with Tomcat `threads.max=200` |
 | R-5 | ~~PgJDBC doesn't run the multi-statement `connection-init-sql`~~ **Closed:** MIG-05 asserts all three settings on a pooled connection, so the `options=` URL fallback is unused | — | — | — |
 | R-6 | Hibernate validation mismatch | Medium | Low | Entity column definitions mirror the DDL; MIG-01 catches it |

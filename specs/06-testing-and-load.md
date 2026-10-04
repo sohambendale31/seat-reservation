@@ -194,7 +194,7 @@ Purpose: show correctness under load and **measure** (not promise) latency and t
 |---|---|---|---|
 | L-1 | Local Compose (record CPU, RAM, Docker resources) | `java scripts/BurstTest.java --scenario all --base-url http://localhost:8080` | Outcome table, latency percentiles, reconcile result |
 | L-2 | Local Compose, 20k burst | `--scenario pool-burst --requests 20000 --concurrency 500` | Same |
-| L-3 | Deployed URL | `--base-url https://<deployed-host> --scenario all --concurrency 200` | Same, plus host plan/size |
+| L-3 | Deployed URL | `--base-url https://<deployed-host> --scenario all --concurrency 200` | Same, plus host plan/size. Warm up first and confirm Serverless is off: a cold start answers **502**, which would fail the run |
 | L-4 | Deployed URL, 20k burst (**mandatory**, ADR-022) | `--scenario pool-burst --requests 20000 --concurrency 300` | Same. Must show 0 × 5xx; if it doesn't, resize the plan or pool and rerun |
 
 Load-generator limits (state these in the report):
@@ -206,7 +206,9 @@ Load-generator limits (state these in the report):
   (keep-alive). Check `ulimit -n` (≥ 4× concurrency), the ephemeral port range, and the laptop's CPU.
   If the generator's CPU is above 80 %, the measurement reflects the client, not the server.
 - Hosted platforms have edge proxies with their own connection limits, rate limits, and request
-  timeouts. 502/503/504/429 from the edge are counted under "5xx/other 4xx" and annotated.
+  timeouts. 502/503/504/429 from the edge are counted under "5xx/other 4xx" and annotated. On
+  Railway a 502 can also mean the service was asleep (ADR-026), so Serverless must be off before a
+  run and the warm-up must be recorded.
 - Server capacity is bounded by `DB_POOL_MAX_SIZE` concurrent transactions. Excess requests **queue**
   in Hikari for up to `DB_POOL_CONNECTION_TIMEOUT_MS` (60 s) instead of being shed (ADR-022). Under
   the 20k burst this shows up as latency, not errors. A 503 from the app means a last-resort timeout

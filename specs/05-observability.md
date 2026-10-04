@@ -46,11 +46,14 @@ management:
   timeout, and against a **frozen** server it waits for the JDBC `socketTimeout` instead, because no
   pool timeout bounds a read on a connection already held (ADR-025). Without that socket timeout the
   probe would never answer at all, which is measured by IT-FAIL-02.
-- So `/readyz` is **not** the hosting platform's health check on a single-instance host with short
-  check timeouts that restarts failing instances (Render: 5 s timeout, restart after 60 s of
-  failures). The host checks `/livez` instead (ADR-019). During a burst, `/readyz` can wait
-  in line for a pool connection for up to the 60 s pool timeout (ADR-022). The `SeatresNotReady`
-  alert's 2-minute `for:` window absorbs that, so a short burst doesn't page.
+- So `/readyz` is **not** the right probe for a host that checks **continuously** with a short
+  timeout and restarts failing instances (Render: 5 s timeout, restart after 60 s of failures) — such
+  a host checks `/livez` instead (ADR-019). Railway probes only at deploy time and never afterwards,
+  so there `/readyz` is the deploy check and nothing restarts the instance later (ADR-026). During a
+  burst, `/readyz` can wait in line for a pool connection for up to the 60 s pool timeout (ADR-022).
+  The `SeatresNotReady` alert's 2-minute `for:` window absorbs that, so a short burst doesn't page.
+- On a host with no continuous probe, that external alert is the **only** automatic signal that the
+  service has stopped serving, which is why it is not optional.
 - During graceful shutdown, Spring sets readiness to `REFUSING_TRAFFIC`, so `/readyz` returns 503
   and the host stops routing to the container.
 

@@ -9,6 +9,7 @@
 | `docker-compose.yml` | `postgres` + `app` |
 | `.env.example` | Every variable from §3 with safe placeholder values (never real secrets) |
 | `src/main/resources/application*.yml` | Externalized configuration (§4) |
+| `railway.json` | Host settings that must not be left at their defaults (§7.2, ADR-026) |
 
 ## 2. Dockerfile requirements
 
@@ -45,7 +46,7 @@ Every variable is mapped explicitly in `application.yml` rather than relying on 
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `PORT` | no | `8080` | HTTP port (hosts like Render inject it) |
+| `PORT` | no | `8080` | HTTP port. Some hosts inject it; on Railway **set it explicitly**, because it is what the generated domain routes to and what the deploy healthcheck targets (§7.2) |
 | `SPRING_PROFILES_ACTIVE` | no | (none) | `local` (Compose), `prod` (hosted), `test` (tests) |
 | `DB_URL` | **yes** | — | JDBC URL, e.g. `jdbc:postgresql://host:5432/seatres?sslmode=require` |
 | `DB_USERNAME` | **yes** | — | |
@@ -197,6 +198,10 @@ key shorter than 32 bytes, or equal to its local dev default, aborts startup.
   `read committed`.
 - Rule: `DB_POOL_MAX_SIZE + 2 ≤ max_connections − superuser_reserved_connections − headroom (≈10)`.
   The `+ 2` is the observability pool used by the seats gauge (ADR-023).
+- **During a redeploy on a host that overlaps deployments** (Railway does, §7.2) two instances run
+  briefly, so the requirement becomes `2 × (DB_POOL_MAX_SIZE + 2)` unless the overlap is set to 0.
+  Correctness is unaffected — no allocation state lives in the process — but exceeding
+  `max_connections` turns a redeploy into `53300` errors, which are 503s.
   Check the managed plan's actual `max_connections` (`SHOW max_connections;`). Small plans can be
   well below the stock default of 100.
 - Starting point: `DB_POOL_MAX_SIZE=20`. A bigger pool doesn't mean more throughput: the DB's CPU
@@ -260,54 +265,99 @@ Commands: `docker compose up -d --build`, `docker compose logs -f app`, and
 
 | Host | App | Database | Notes |
 |---|---|---|---|
-| **Render (recommended)** | Web Service from the `Dockerfile` | Render PostgreSQL (same region) | Health check path `/livez` (ADR-019); injects `PORT`; health-gated deploys. Free web instances spin down when idle, and free databases are time-limited. **Use paid instances for the evaluation window.** Check current terms. |
-| Railway | Docker deploy | Railway PostgreSQL | Usage-based pricing |
-| Fly.io | `fly deploy` with the Dockerfile | Fly-managed or external Postgres (direct URL) | HTTP health check on `/livez` (ADR-019) |
+| **Railway (chosen)** | Docker service built from the `Dockerfile` | Railway PostgreSQL in the same project, reached over private networking | Healthcheck runs **only at deploy time**; four defaults must be overridden (ADR-026). See §7.2 |
+| Render | Web Service from the `Dockerfile` | Render PostgreSQL (same region) | Continuous health checks with a 5 s timeout, so the probe must be `/livez` (ADR-019). Free web instances spin down |
+| Fly.io | `fly deploy` with the Dockerfile | Fly-managed or external Postgres (direct URL) | Continuous HTTP health check, same `/livez` reasoning as Render |
 
-### 7.2 Render deployment steps
+### 7.2 Railway deployment steps
 
-1. Push the repository to a Git host. The URL is created by the developer; none is assumed here.
-2. Create a **PostgreSQL** instance (PG 16) in the same region as the app. It provides persistent
-   storage. Note its internal host, port, database, user, and password.
-3. Create a **Web Service**: "Docker" runtime, repository root, an instance with **≥ 1 GiB RAM**, and
-   exactly **one** instance.
-4. Set the health check path to `/livez` (ADR-019). Per Render's docs, checks time out after 5 s;
-   Render stops routing after 15 s of failures and restarts the instance after 60 s. So the check
-   must not depend on the DB or the pool: `/readyz` can exceed 5 s when the pool is saturated.
-   Startup already proves DB connectivity, because Flyway runs before Tomcat accepts traffic. Keep
-   `/readyz` for external monitoring (`05` §8, `SeatresNotReady`).
-5. Set the environment variables (mark secrets as secret):
-   - `SPRING_PROFILES_ACTIVE=prod`
-   - `DB_URL=jdbc:postgresql://<internal-host>:5432/<db>?sslmode=require`. Render gives a
-     `postgres://user:pass@host/db` URL; convert it into a JDBC URL plus separate
-     `DB_USERNAME`/`DB_PASSWORD`. Use `sslmode=prefer` if the internal network doesn't offer TLS.
-   - `DB_USERNAME`, `DB_PASSWORD`
-   - `APP_AUTH_JWT_SECRET` (output of `openssl rand -base64 48`)
-   - `APP_AUTH_ADMIN_KEY` (a different `openssl rand -base64 48` value)
-   - `DB_POOL_MAX_SIZE`, sized per §5
+Facts about Railway below were read from its documentation on 2026-10-04. Re-check them if the
+platform changes; the four overrides in step 5 are the ones that matter.
+
+1. Push the repository to a Git host. Create a Railway project and deploy the repo as a service.
+   Railway builds the committed `Dockerfile`; no buildpack configuration is needed.
+2. Add a **PostgreSQL** database to the same project, so the app reaches it over private networking
+   (`<service>.railway.internal`) with no public egress.
+3. Generate a domain for the app service (Settings → Networking). Railway routes the domain to the
+   port in `PORT`, so set `PORT` explicitly rather than relying on auto-detection.
+4. Set the app service's variables. `DATABASE_URL` is a `postgres://` URL that PgJDBC does not
+   accept, so build the JDBC URL from the database service's parts with reference variables:
+
+   ```
+   SPRING_PROFILES_ACTIVE=prod
+   PORT=8080
+   DB_URL=jdbc:postgresql://${{Postgres.PGHOST}}:${{Postgres.PGPORT}}/${{Postgres.PGDATABASE}}?sslmode=require
+   DB_USERNAME=${{Postgres.PGUSER}}
+   DB_PASSWORD=${{Postgres.PGPASSWORD}}
+   APP_AUTH_JWT_SECRET=<openssl rand -base64 48>
+   APP_AUTH_ADMIN_KEY=<a different openssl rand -base64 48>
+   DB_POOL_MAX_SIZE=<sized per §5>
+   ```
+
+   Replace `Postgres` with the database service's actual name. If the private-network TLS handshake
+   fails, fall back to `sslmode=prefer` and record that in `WRITEUP.md`.
+5. Override the four defaults that would otherwise break a stated guarantee (ADR-026). Prefer
+   `railway.json` at the repository root, since config-as-code always wins over the dashboard:
+
+   ```json
+   {
+     "$schema": "https://railway.com/railway.schema.json",
+     "build": {
+       "builder": "DOCKERFILE",
+       "dockerfilePath": "Dockerfile"
+     },
+     "deploy": {
+       "numReplicas": 1,
+       "sleepApplication": false,
+       "healthcheckPath": "/readyz",
+       "healthcheckTimeout": 300,
+       "drainingSeconds": 25,
+       "overlapSeconds": 0,
+       "restartPolicyType": "ON_FAILURE",
+       "restartPolicyMaxRetries": 10
+     }
+   }
+   ```
+
+   | Setting | Default | Why it is set |
+   |---|---|---|
+   | `drainingSeconds` | **0** | SIGTERM is followed immediately by SIGKILL, killing in-flight transactions. 25 s clears the 20 s shutdown budget in §9 |
+   | `sleepApplication` | varies | A slept service answers the first request with **502**, which is a 5xx and fails NFR-1. `false` keeps it awake, and config-as-code wins over the dashboard toggle |
+   | `overlapSeconds` | non-zero | The old and new deployments overlap, needing `2 × (DB_POOL_MAX_SIZE + 2)` connections (§5). `0` keeps the one-instance assumption of ADR-002 |
+   | `healthcheckPath` | none | `/readyz` gates the release on readiness. Safe here because Railway probes **only at deploy time** and never afterwards (ADR-026) |
+   | `numReplicas` | 1 | Pins ADR-002's single instance rather than leaving it to a default that a dashboard click could change |
+   | `restartPolicyType` | — | `ON_FAILURE` restarts after a non-zero exit, which is what a failed migration or a failed startup check produces, and recovers from a database that was briefly absent at boot |
+
+   Every key and value above was validated against `https://railway.com/railway.schema.json`, whose
+   `builder` accepts `DOCKERFILE` and whose `restartPolicyType` accepts `ALWAYS`, `NEVER` or
+   `ON_FAILURE`. JSON has no comments, so the reasoning lives in this table.
+
 6. Deploy, and check the logs for Flyway success and `Started SeatReservationApplication`.
 7. Run the verification checklist (§11).
 8. Record the public URL in `README.md` and `WRITEUP.md`. The evaluator gets USER tokens from
-   `POST /auth/token` with no extra credential. For ADMIN tokens (creating shows), share the **admin
-   key** privately, never in the repo, and rotate it after the evaluation. The JWT signing secret is
-   never shared (ADR-021).
+   `POST /auth/token` with no extra credential. For ADMIN tokens, share the **admin key** privately,
+   never in the repo, and rotate it after the evaluation. The JWT signing secret is never shared
+   (ADR-021).
 
 ### 7.3 Realistic limitations and mitigations
 
 | Limitation | Effect | Mitigation |
 |---|---|---|
+| Nothing probes the service after deploy | A wedged instance is never restarted by the platform | External `/readyz` monitoring (`05` §8) is the only automatic signal; the socket timeouts of ADR-025 keep an unreachable database from hanging the service |
+| Serverless cold start | First request after idle can be **502** | Disable Serverless; warm up with `/readyz` and one GET before the burst |
+| Deployment overlap | Briefly doubles database connections | `overlapSeconds: 0`, or size the pool for `2 × (DB_POOL_MAX_SIZE + 2)` (§5) |
 | Small instance CPU/RAM | Lower throughput; GC pauses | ≥ 1 GiB RAM; `MaxRAMPercentage=75`; measure and report honestly |
-| Idle spin-down / cold start | The first request after idle is slow or times out at the edge | Paid always-on instance during evaluation; warm up with `/readyz` and one GET before the burst |
 | Small DB plan `max_connections` / IOPS | Long queues under the 20k burst; a 503 only if a last-resort timeout is reached | Pool sizing per §5; choose the plan **by measurement** so L-4 shows 0 × 5xx (A-12, ADR-022) |
 | Edge proxy limits / timeouts | 502/504/429 from the platform, not the app | Counted separately in the burst output; moderate concurrency (200) for deployed runs |
-| Free DB expiry / no backups | Data loss | Paid DB for the evaluation window; the burst creates its own data, so it's reproducible |
+| Usage-based billing | A long burst costs money | Keep deployed runs to the two mandated ones (L-3, L-4) |
+| Legacy environment (created before 2025-10-16) | Private networking is IPv6-only, and a JVM may not prefer IPv6 | A project created now resolves `.railway.internal` to both families. On a legacy environment, add `-Djava.net.preferIPv6Addresses=true` to `JAVA_OPTS` |
 
 The assignment requires **zero 5xx** across the evaluator's ~20,000-request burst (NFR-1). The design
 queues overload instead of shedding it (ADR-022), but no design can guarantee that on an undersized
 plan. So the plan is chosen by measurement: run L-4 (20k against the deployed URL) and require
-0 × 5xx. If it fails, scale the instance or the DB, or tune the pool, or adopt the fast-path
-fallback in `04` §12, then rerun. Also check that the host's edge request timeout and the container's
-open-file limit (≥ 25,000 connections) don't cut the queue short.
+0 × 5xx. If it fails, scale the instance or the database, or tune the pool, or adopt the fast-path
+fallback in `04` §12, then rerun. Also check that the platform's edge request timeout and the
+container's open-file limit (≥ 25,000 connections) don't cut the queue short.
 
 ## 8. Secrets management
 
@@ -341,6 +391,9 @@ Graceful shutdown (SIGTERM):
    closes, and the client retries with the same key.
 4. Hikari closes its connections, and the JVM exits with 0.
 5. `stop_grace_period: 30s` (Compose) and the host's termination grace period must exceed 20 s.
+   On Railway that grace period is **0 by default** — SIGTERM is followed immediately by SIGKILL —
+   so `drainingSeconds` must be set to 25 (§7.2, ADR-026). Without it, steps 2–4 above never happen:
+   in-flight transactions are severed and rolled back by PostgreSQL, and clients must retry.
 
 ## 10. Clean checkout, reproducible startup, and test-data cleanup
 
@@ -384,6 +437,8 @@ Idempotency records don't reference shows or reservations; they expire through r
 | 9 | Burst correctness (hosted) | `BurstTest --scenario all --concurrency 200` **and** `--scenario pool-burst --requests 20000 --concurrency 300` → `ASSERTIONS: PASS`, with 0 × 5xx |
 | 10 | No invariant violations | `seatres_invariant_violations_total` = 0 |
 | 11 | Logs are JSON, contain `requestId`, and contain no tokens | Host log viewer |
-| 12 | Graceful shutdown | Redeploy during light load: no 500s; at most retryable 503s |
+| 12 | Graceful shutdown | Redeploy during light load: no 500s; at most retryable 503s. Confirms `drainingSeconds` is in effect |
+| 15 | Serverless is off | `railway.json` sets `sleepApplication: false`; confirm behaviourally by leaving the service idle for > 5 minutes, then sending one request: it must not be a 502 |
+| 16 | Deploy healthcheck | The deploy log shows the healthcheck on `/readyz` passing before the release goes live |
 | 13 | No secrets in Git | `git grep -nE 'APP_AUTH_(JWT_SECRET|ADMIN_KEY)=\S|BEGIN PRIVATE KEY'` shows only placeholders |
 | 14 | Token endpoint | `POST /auth/token` without `X-Admin-Key` for role `ADMIN` → 403; with the key → 200 |

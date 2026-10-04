@@ -112,6 +112,8 @@ Format: Decision · Context · Alternatives · Rationale · Consequences. The st
   scraping and evaluation simple. Production would restrict it at the network level.
 
 ## ADR-017: Render as the primary host
+> **Superseded by ADR-026:** the host is Railway. The reasoning below (Docker deploys, managed
+> Postgres in the same region, no tier assumed adequate) still applies; only the provider changed.
 > **Amended by ADR-022:** the plan is chosen by measurement. It must pass the deployed 20k run (L-4)
 > with 0 × 5xx.
 - **Alternatives:** Railway, Fly.io.
@@ -135,6 +137,10 @@ Format: Decision · Context · Alternatives · Rationale · Consequences. The st
   `07` §11 item 7, and `08` P1/P4 test ranges.
 
 ## ADR-019: Host health check uses `/livez`, not `/readyz`
+> **Scoped by ADR-026:** this holds for hosts that probe *continuously* and restart on failure.
+> Railway probes only at deploy time and never afterwards, so on Railway the deploy check is
+> `/readyz`. The principle is unchanged: never let a probe that depends on the database restart the
+> only instance.
 - **Context:** Render's health-check docs (checked 2026-10-03) say checks time out after 5 s.
   Render stops routing to an instance after 15 s of consecutive failures and restarts it after
   60 s. `/readyz` borrows a pool connection and can wait up to the 10 s pool timeout under a
@@ -327,3 +333,55 @@ Format: Decision · Context · Alternatives · Rationale · Consequences. The st
   happen here because `statement_timeout` is 35 s. Updated `01` §9, `05` §2, `07` §3/§4.1, and `06`
   §3.7. The gauge's failure path is now reachable in bounded time, which is what makes
   `metrics.seat_query_failed` more than a theoretical branch.
+
+## ADR-026: Railway as the host, with four platform defaults that must be overridden
+- **Context:** the deployment target changed from Render to Railway. Railway's defaults differ from
+  Render's in ways that would quietly break guarantees this specification makes, so the switch is
+  more than a provider swap. Facts below were read from Railway's documentation on 2026-10-04 and
+  must be re-checked if the platform changes.
+- **Decision:** deploy one Docker service plus a Railway PostgreSQL service in the same project, and
+  override these defaults, each of which would otherwise break something specific:
+  1. **`drainingSeconds` (default 0).** Railway sends SIGTERM and then, by default, "0 seconds to
+     gracefully shutdown before being forcefully stopped with a SIGKILL". That would kill in-flight
+     reserve transactions on every redeploy, which `07` §9 explicitly budgets 20 s for. Set
+     `RAILWAY_DEPLOYMENT_DRAINING_SECONDS` to **25**, comfortably above
+     `spring.lifecycle.timeout-per-shutdown-phase` (20 s). A killed transaction is rolled back by
+     PostgreSQL and the client's retry replays it, so this costs latency, not correctness — but
+     there is no reason to accept it.
+  2. **Serverless / app sleeping — off.** A slept service "may return a 502 Bad Gateway response" on
+     the first request. A 502 is a 5xx, so a single cold start would fail NFR-1 and the evaluator's
+     burst. Set `sleepApplication: false` in `railway.json`, which is stronger than the dashboard
+     toggle because config-as-code always wins.
+  3. **`overlapSeconds` (zero-downtime overlap).** Railway keeps the old and new deployments running
+     together briefly on every redeploy. Correctness survives it — no allocation state lives in the
+     process, which is the whole point of ADR-001/ADR-003 — but **connection count does not**: the
+     overlap needs `2 × (DB_POOL_MAX_SIZE + 2)` connections, which can exceed a small plan's
+     `max_connections`. Set `RAILWAY_DEPLOYMENT_OVERLAP_SECONDS=0` to keep the single-instance
+     assumption of ADR-002, or size the pool for double and say so.
+  4. **`healthcheckPath = /readyz`, `healthcheckTimeout = 300`.** Railway's healthcheck runs **only
+     at deploy time**: the documentation states it "does not monitor the healthcheck endpoint after
+     the deployment has gone live" and is "not used for continuous monitoring". The hazard that made
+     `/readyz` unsafe on Render — a continuous, 5-second, database-dependent probe restarting the
+     only instance mid-burst — therefore does not exist here, so the stronger gate is free: a
+     release goes live only once it can actually serve. `PORT` is also what the healthcheck targets.
+  5. **`numReplicas: 1`**, which pins ADR-002's single instance instead of trusting a default, and
+     **`restartPolicyType: ON_FAILURE`**, which is what a failed migration or startup check produces
+     and which also recovers from a database that was briefly absent at boot.
+  6. **`PORT` set explicitly to 8080**, and `DB_URL` assembled from the database service's reference
+     variables. Railway's `DATABASE_URL` is a `postgres://` URL, which PgJDBC does not accept, so the
+     JDBC URL is built from `PGHOST`/`PGPORT`/`PGDATABASE` with the credentials passed separately.
+- **Alternatives:** Render (ADR-017; no longer the chosen target); Fly.io (equivalent, same class of
+  per-platform defaults to check); leaving the defaults alone and discovering the SIGKILL and the
+  cold-start 502 during the evaluated burst.
+- **Rationale:** every item above is a platform default that silently violates a stated guarantee.
+  Writing them down in `railway.json`, where config-as-code overrides the dashboard, is cheaper than
+  rediscovering them under load and stops them drifting when someone clicks something. Every key was
+  validated against the published `railway.schema.json`.
+- **Consequences:** because nothing probes the service after deploy, **nothing will restart a wedged
+  instance**. That raises the value of the external `/readyz` monitor (`05` §8, `SeatresNotReady`)
+  and of the socket timeouts in ADR-025, which are now the only thing that keeps an unreachable
+  database from hanging the service indefinitely. Updated `00` A-12, `01` §1/§8, `05` §2, `06` §6,
+  `07` §1/§5/§7/§9/§11, `08` P7 and R-2, and the README. One residual note: environments created
+  before 2025-10-16 have IPv6-only private networking, where a JVM may need
+  `-Djava.net.preferIPv6Addresses=true`; newer environments resolve `.railway.internal` to both
+  families, so a project created now is unaffected.

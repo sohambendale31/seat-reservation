@@ -172,9 +172,12 @@ for a deployed DB, see the purge in [07-deployment §10](specs/07-deployment.md)
 
 ## Deployment
 
-The Docker image runs anywhere. The recommended host is Render: a single Docker Web Service plus
-Render PostgreSQL, with health check `/livez` (ADR-019). Steps, limitations, and a verification checklist are
-in [specs/07-deployment.md](specs/07-deployment.md).
+The Docker image runs anywhere. The chosen host is **Railway**: one Docker service plus a Railway
+PostgreSQL service in the same project. Four Railway defaults must be overridden or they break
+guarantees this service makes — the draining grace is 0 (SIGKILL mid-transaction), a slept service
+answers 502 (a 5xx), deployments overlap (doubling database connections), and the healthcheck runs
+only at deploy time. Steps, the `railway.json` to commit, limitations, and a verification checklist
+are in [specs/07-deployment.md §7](specs/07-deployment.md).
 
 Deployed URL: ⟪TBD: deployed URL⟫
 
