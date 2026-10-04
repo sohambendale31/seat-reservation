@@ -19,7 +19,10 @@ class TokenIssuerTest {
 
     private final AppProperties properties = new AppProperties(
             new AppProperties.Auth(TestTokens.SECRET, "test-only-admin-key-0123456789-abcdefghij"),
-            new AppProperties.Idempotency(Duration.ofHours(24)));
+            new AppProperties.Idempotency(Duration.ofHours(24)),
+            new AppProperties.Observability(
+                    new AppProperties.Pool(2, Duration.ofSeconds(2), Duration.ofSeconds(3),
+                            "SET statement_timeout = '2s'")));
 
     private final JwtConfig jwtConfig = new JwtConfig();
     private final SecretKey signingKey = jwtConfig.jwtSigningKey(properties);

@@ -30,6 +30,13 @@ spring:
         SET lock_timeout = '${DB_LOCK_TIMEOUT_MS:30000}ms';
         SET statement_timeout = '${DB_STATEMENT_TIMEOUT_MS:35000}ms';
         SET idle_in_transaction_session_timeout = '30000ms'
+      data-source-properties:
+        # A frozen or blackholed server answers nothing and closes nothing, so without a socket
+        # read timeout every request waits forever. Above statement_timeout, so a server that is
+        # merely slow still gets to cancel its own query first.
+        socketTimeout: 60
+        connectTimeout: 10
+        tcpKeepAlive: true
   jpa:
     open-in-view: false
     hibernate:
@@ -71,7 +78,8 @@ app:
   observability:
     pool:                                # separate pool for the seats gauge only
       maximum-pool-size: 2
-      connection-timeout: 2000
+      connection-timeout: 2000ms
+      socket-timeout: 3s                 # just above the statement timeout below
       connection-init-sql: SET statement_timeout = '2000ms'
 
 management:

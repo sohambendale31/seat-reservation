@@ -15,13 +15,22 @@ public final class Api {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
+    private static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofSeconds(30);
+
     private final HttpClient http = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(5))
             .build();
     private final String baseUrl;
+    private final Duration requestTimeout;
 
     public Api(int port) {
+        this(port, DEFAULT_REQUEST_TIMEOUT);
+    }
+
+    /** A longer timeout is needed where the server itself waits, such as on a pool timeout. */
+    public Api(int port, Duration requestTimeout) {
         this.baseUrl = "http://localhost:" + port;
+        this.requestTimeout = requestTimeout;
     }
 
     public Response get(String path, String bearerToken) {
@@ -58,7 +67,7 @@ public final class Api {
     private HttpRequest.Builder request(String path, String bearerToken,
             Map<String, String> headers) {
         HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(baseUrl + path))
-                .timeout(Duration.ofSeconds(30));
+                .timeout(requestTimeout);
         if (bearerToken != null) {
             builder.header("Authorization", "Bearer " + bearerToken);
         }

@@ -9,6 +9,8 @@ spring:
         SET lock_timeout = '${DB_LOCK_TIMEOUT_MS:2000}ms';
         SET statement_timeout = '${DB_STATEMENT_TIMEOUT_MS:35000}ms';
         SET idle_in_transaction_session_timeout = '30000ms'
+      data-source-properties:
+        socketTimeout: 5
 
 app:
   auth:

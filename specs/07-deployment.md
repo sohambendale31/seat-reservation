@@ -54,6 +54,7 @@ Every variable is mapped explicitly in `application.yml` rather than relying on 
 | `DB_POOL_CONNECTION_TIMEOUT_MS` | no | `60000` | Max wait in line for a pooled connection. A last resort: past it, a 503 (ADR-022) |
 | `DB_LOCK_TIMEOUT_MS` | no | `30000` | PostgreSQL `lock_timeout` per connection (last resort, ADR-022) |
 | `DB_STATEMENT_TIMEOUT_MS` | no | `35000` | PostgreSQL `statement_timeout` per connection; longer than `lock_timeout` |
+| *(not configurable)* | — | `socketTimeout=60`, `connectTimeout=10`, `tcpKeepAlive=true` | JDBC socket-level bounds, so an unreachable-but-not-closed server fails instead of hanging (ADR-025). Raise `socketTimeout` only together with `DB_STATEMENT_TIMEOUT_MS` |
 | `APP_AUTH_JWT_SECRET` | **yes** (except in profile `local`, which has a dev default) | — | HS256 key, ≥ 32 bytes; generate with `openssl rand -base64 48`. Never shared |
 | `APP_AUTH_ADMIN_KEY` | **yes** (except in profile `local`, which has a dev default) | — | Required in `X-Admin-Key` to get an ADMIN token from `POST /auth/token` (ADR-021). ≥ 32 bytes, and **must differ from `APP_AUTH_JWT_SECRET`** (startup refuses equal values); generate with `openssl rand -base64 48`. Shared privately with the evaluator |
 | `APP_IDEMPOTENCY_RETENTION` | no | `PT24H` | ISO-8601 duration, ≥ `PT24H` (`StartupChecks` refuses lower values, because `04` §5 promises keys are honoured for at least 24 h) |
@@ -102,6 +103,10 @@ spring:
         SET lock_timeout = '${DB_LOCK_TIMEOUT_MS:30000}ms';
         SET statement_timeout = '${DB_STATEMENT_TIMEOUT_MS:35000}ms';
         SET idle_in_transaction_session_timeout = '30000ms'
+      data-source-properties:          # ADR-025: a frozen server never errors on its own
+        socketTimeout: 60              # above statement_timeout, so a slow query cancels itself first
+        connectTimeout: 10
+        tcpKeepAlive: true
   jpa:
     open-in-view: false
     hibernate:
@@ -143,7 +148,8 @@ app:
   observability:
     pool:                                # second, tiny pool used only by SeatGaugeCollector (ADR-023)
       maximum-pool-size: 2               # same DB_URL / DB_USERNAME / DB_PASSWORD as the main pool
-      connection-timeout: 2000
+      connection-timeout: 2000ms
+      socket-timeout: 3s                 # just above its statement timeout (ADR-025)
       connection-init-sql: SET statement_timeout = '2000ms'
 
 management:   # full block in 05 §2

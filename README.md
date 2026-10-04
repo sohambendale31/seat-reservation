@@ -3,12 +3,12 @@
 A JSON HTTP API for reserving assigned seats for shows. It stays correct when thousands of users
 try to reserve the same seats at the same time.
 
-> **Status:** phases P0–P4 of [specs/08-implementation-plan.md](specs/08-implementation-plan.md) are
+> **Status:** phases P0–P5 of [specs/08-implementation-plan.md](specs/08-implementation-plan.md) are
 > implemented and verified, so the whole API below works: tokens, show creation, show reads,
-> reserve and cancel. `./mvnw verify` and `docker compose up` are green.
-> **Not built yet:** the custom metrics and the seats gauge (P5), the burst script (P6) and the
-> deployment (P7) — so the metrics and burst sections below still describe target behaviour.
-> Deployed URL: ⟪TBD: deployed URL⟫.
+> reserve and cancel, plus the metrics and structured logs. `./mvnw verify` and `docker compose up`
+> are green.
+> **Not built yet:** the burst script (P6) and the deployment (P7) — so the burst section below
+> still describes target behaviour. Deployed URL: ⟪TBD: deployed URL⟫.
 
 ## Guarantees
 

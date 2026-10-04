@@ -42,10 +42,13 @@ management:
 ```
 
 - Readiness is DOWN (HTTP 503) when PostgreSQL is unreachable. The `db` indicator borrows a Hikari
-  connection and runs `Connection.isValid`. When the pool is saturated it can wait up to the Hikari
-  connection timeout. So `/readyz` is **not** the hosting platform's health check on a single-instance
-  host with short check timeouts that restarts failing instances (Render: 5 s timeout, restart after
-  60 s of failures). The host checks `/livez` instead (ADR-019). During a burst, `/readyz` can wait
+  connection and validates it. When the pool is saturated it can wait up to the Hikari connection
+  timeout, and against a **frozen** server it waits for the JDBC `socketTimeout` instead, because no
+  pool timeout bounds a read on a connection already held (ADR-025). Without that socket timeout the
+  probe would never answer at all, which is measured by IT-FAIL-02.
+- So `/readyz` is **not** the hosting platform's health check on a single-instance host with short
+  check timeouts that restarts failing instances (Render: 5 s timeout, restart after 60 s of
+  failures). The host checks `/livez` instead (ADR-019). During a burst, `/readyz` can wait
   in line for a pool connection for up to the 60 s pool timeout (ADR-022). The `SeatresNotReady`
   alert's 2-minute `for:` window absorbs that, so a short burst doesn't page.
 - During graceful shutdown, Spring sets readiness to `REFUSING_TRAFFIC`, so `/readyz` returns 503
@@ -109,7 +112,8 @@ HTTP 201 from reserve         = seatres_reservations_confirmed_total + seatres_i
 
   Statuses with no seats are exposed as 0, so each tracked show always has all three series.
 - The query runs on a **dedicated observability pool** (2 connections, connection timeout 2 s,
-  `statement_timeout` 2 s), never the reservation pool. During a 20k burst the main pool has a long
+  `statement_timeout` 2 s, `socketTimeout` 3 s), never the reservation pool. The socket timeout is
+  what makes the fallback below reachable against a frozen server rather than a hang (ADR-025). During a 20k burst the main pool has a long
   queue (ADR-022). A gauge sharing that pool would stall exactly while the evaluator is watching.
 - If the query fails or times out, the collector serves the **last successful snapshot** and logs
   `metrics.seat_query_failed` (WARN), so a scrape never errors.
@@ -133,6 +137,11 @@ HTTP 201 from reserve         = seatres_reservations_confirmed_total + seatres_i
 
 Increments happen in after-commit hooks (or, for invariant violations, on the error path after
 rollback). Nothing is incremented inside a transaction that might roll back.
+
+The replay counter is the one exception to the hook rule: a replay commits nothing at all (04 §4
+rolls its transaction back), so there is no commit to hang a hook on. It is incremented once the
+transaction has ended and the replay is known to be the outcome, which is the same guarantee a hook
+would give.
 
 ## 6. Metric reconciliation against PostgreSQL
 

@@ -2,6 +2,7 @@ package com.seatres.service;
 
 import com.seatres.domain.ReservationStatus;
 import com.seatres.error.ReservationNotFoundException;
+import com.seatres.observability.LogRefs;
 import com.seatres.repository.QuotaJdbcRepository;
 import com.seatres.repository.ReservationJdbcRepository;
 import com.seatres.repository.ReservationJdbcRepository.Owner;
@@ -13,6 +14,9 @@ import com.seatres.web.dto.ReservedSeat;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
 
 /**
@@ -24,6 +28,8 @@ import org.springframework.stereotype.Service;
  */
 @Service
 public class CancellationService {
+
+    private static final Logger log = LoggerFactory.getLogger(CancellationService.class);
 
     private final TxExecutor tx;
     private final ReservationJdbcRepository reservations;
@@ -39,31 +45,42 @@ public class CancellationService {
     }
 
     public ReservationResponse cancel(UUID reservationId, String callerId) {
-        return tx.execute(context -> {
-            Owner owner = reservations.findOwner(reservationId)
-                    .filter(found -> found.userId().equals(callerId))
-                    .orElseThrow(() -> new ReservationNotFoundException(reservationId));
+        MDC.put("reservationId", reservationId.toString());
+        MDC.put("userRef", LogRefs.of(callerId));
+        try {
+            return tx.execute(context -> cancelLocked(reservationId, callerId));
+        } finally {
+            MDC.remove("reservationId");
+            MDC.remove("userRef");
+        }
+    }
 
-            quotas.lockForUpdate(owner.showId(), callerId).orElseThrow(() ->
-                    new IllegalStateException("no quota row for an existing reservation"));
+    private ReservationResponse cancelLocked(UUID reservationId, String callerId) {
+        Owner owner = reservations.findOwner(reservationId)
+                .filter(found -> found.userId().equals(callerId))
+                .orElseThrow(() -> new ReservationNotFoundException(reservationId));
 
-            State state = reservations.lockForUpdate(reservationId).orElseThrow(() ->
-                    new IllegalStateException("reservation disappeared while being locked"));
+        quotas.lockForUpdate(owner.showId(), callerId).orElseThrow(() ->
+                new IllegalStateException("no quota row for an existing reservation"));
 
-            if (state.status() == ReservationStatus.CANCELLED) {
-                return response(reservationId, owner, state, state.cancelledAt());
-            }
+        State state = reservations.lockForUpdate(reservationId).orElseThrow(() ->
+                new IllegalStateException("reservation disappeared while being locked"));
 
-            List<Long> lockedSeats = seats.lockByReservation(reservationId);
-            assertCount(lockedSeats.size(), state.seatCount(), "lock");
-            assertCount(seats.release(reservationId), state.seatCount(), "release");
-            assertCount(reservations.releaseLinks(reservationId), state.seatCount(), "unlink");
+        if (state.status() == ReservationStatus.CANCELLED) {
+            log.info("reservation.cancelled noop=true");
+            return response(reservationId, owner, state, state.cancelledAt());
+        }
 
-            Instant cancelledAt = reservations.markCancelled(reservationId);
-            quotas.adjust(owner.showId(), callerId, -state.seatCount());
+        List<Long> lockedSeats = seats.lockByReservation(reservationId);
+        assertCount(lockedSeats.size(), state.seatCount(), "lock");
+        assertCount(seats.release(reservationId), state.seatCount(), "release");
+        assertCount(reservations.releaseLinks(reservationId), state.seatCount(), "unlink");
 
-            return response(reservationId, owner, state, cancelledAt);
-        });
+        Instant cancelledAt = reservations.markCancelled(reservationId);
+        quotas.adjust(owner.showId(), callerId, -state.seatCount());
+
+        log.info("reservation.cancelled noop=false");
+        return response(reservationId, owner, state, cancelledAt);
     }
 
     private ReservationResponse response(UUID reservationId, Owner owner, State state,

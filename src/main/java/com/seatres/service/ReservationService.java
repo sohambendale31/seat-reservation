@@ -10,6 +10,8 @@ import com.seatres.domain.ShowEntity;
 import com.seatres.error.ErrorCode;
 import com.seatres.error.IdempotencyKeyReusedException;
 import com.seatres.error.Problems;
+import com.seatres.observability.LogRefs;
+import com.seatres.observability.ReservationMetrics;
 import com.seatres.repository.IdempotencyJdbcRepository.StoredOutcome;
 import com.seatres.repository.QuotaJdbcRepository;
 import com.seatres.repository.ReservationJdbcRepository;
@@ -24,6 +26,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
 
 /**
@@ -36,6 +41,8 @@ import org.springframework.stereotype.Service;
 @Service
 public class ReservationService {
 
+    private static final Logger log = LoggerFactory.getLogger(ReservationService.class);
+
     private final TxExecutor tx;
     private final IdempotencyService idempotency;
     private final ShowJpaRepository shows;
@@ -43,10 +50,12 @@ public class ReservationService {
     private final QuotaJdbcRepository quotas;
     private final ReservationJdbcRepository reservations;
     private final ObjectMapper objectMapper;
+    private final ReservationMetrics metrics;
 
     public ReservationService(TxExecutor tx, IdempotencyService idempotency,
             ShowJpaRepository shows, SeatJdbcRepository seats, QuotaJdbcRepository quotas,
-            ReservationJdbcRepository reservations, ObjectMapper objectMapper) {
+            ReservationJdbcRepository reservations, ObjectMapper objectMapper,
+            ReservationMetrics metrics) {
         this.tx = tx;
         this.idempotency = idempotency;
         this.shows = shows;
@@ -54,33 +63,60 @@ public class ReservationService {
         this.quotas = quotas;
         this.reservations = reservations;
         this.objectMapper = objectMapper;
+        this.metrics = metrics;
     }
 
     public ReserveOutcome reserve(ReserveCommand command) {
-        return tx.execute(context -> {
-            UUID recordId = UUID.randomUUID();
-            Optional<StoredOutcome> stored = idempotency.claimOrLoad(recordId, command);
-            if (stored.isPresent()) {
-                if (!stored.get().fingerprint().equals(command.fingerprint())) {
-                    throw new IdempotencyKeyReusedException();
+        MDC.put("showId", command.showId().toString());
+        MDC.put("userRef", LogRefs.of(command.userId()));
+        MDC.put("idemKeyRef", LogRefs.of(command.idemKey()));
+        long startedAt = System.nanoTime();
+        try {
+            ReserveOutcome outcome = tx.execute(context -> {
+                UUID recordId = UUID.randomUUID();
+                Optional<StoredOutcome> stored = idempotency.claimOrLoad(recordId, command);
+                if (stored.isPresent()) {
+                    if (!stored.get().fingerprint().equals(command.fingerprint())) {
+                        throw new IdempotencyKeyReusedException();
+                    }
+                    context.rollbackOnly();
+                    return new ReserveOutcome.Replayed(stored.get().status(), stored.get().body());
                 }
-                context.rollbackOnly();
-                return new ReserveOutcome.Replayed(stored.get().status(), stored.get().body());
-            }
-            return allocate(command, recordId);
-        });
+                return allocate(command, context, recordId);
+            });
+            report(command, outcome, startedAt);
+            return outcome;
+        } finally {
+            MDC.remove("showId");
+            MDC.remove("userRef");
+            MDC.remove("idemKeyRef");
+        }
     }
 
-    private ReserveOutcome allocate(ReserveCommand command, UUID recordId) {
+    /** A replay commits nothing, so its counter cannot live in an after-commit hook. */
+    private void report(ReserveCommand command, ReserveOutcome outcome, long startedAt) {
+        if (outcome instanceof ReserveOutcome.Replayed replayed) {
+            metrics.idempotentReplay(replayed.status());
+            log.info("reservation.replayed originalStatus={}", replayed.status());
+            return;
+        }
+        if (outcome instanceof ReserveOutcome.Confirmed) {
+            log.info("reservation.confirmed seatCount={} durationMs={}", command.seatCount(),
+                    (System.nanoTime() - startedAt) / 1_000_000);
+        }
+    }
+
+    private ReserveOutcome allocate(ReserveCommand command, TxExecutor.TxContext context,
+            UUID recordId) {
         Optional<ShowEntity> show = shows.findById(command.showId());
         if (show.isEmpty()) {
-            return decline(command, recordId, ErrorCode.SHOW_NOT_FOUND,
+            return decline(command, context, recordId, ErrorCode.SHOW_NOT_FOUND,
                     Map.of("showId", command.showId().toString()));
         }
 
         List<SeatRef> resolved = seats.resolveLabels(command.showId(), command.labels());
         if (resolved.size() != command.seatCount()) {
-            return decline(command, recordId, ErrorCode.UNKNOWN_SEAT,
+            return decline(command, context, recordId, ErrorCode.UNKNOWN_SEAT,
                     Map.of("unknownSeats", unknownLabels(command, resolved)));
         }
 
@@ -89,7 +125,7 @@ public class ReservationService {
                 .lockForUpdate(command.showId(), command.userId())
                 .orElseThrow(() -> new IllegalStateException("quota row is missing after ensure"));
         if (quota.seatsHeld() + command.seatCount() > quota.seatLimit()) {
-            return decline(command, recordId, ErrorCode.USER_LIMIT_EXCEEDED, Map.of(
+            return decline(command, context, recordId, ErrorCode.USER_LIMIT_EXCEEDED, Map.of(
                     "perUserLimit", quota.seatLimit(),
                     "seatsHeld", quota.seatsHeld(),
                     "seatsRequested", command.seatCount()));
@@ -106,15 +142,15 @@ public class ReservationService {
                 .map(SeatRow::label)
                 .toList();
         if (!unavailable.isEmpty()) {
-            return decline(command, recordId, ErrorCode.SEAT_UNAVAILABLE,
+            return decline(command, context, recordId, ErrorCode.SEAT_UNAVAILABLE,
                     Map.of("unavailableSeats", unavailable));
         }
 
-        return confirm(command, recordId, locked, seatIds);
+        return confirm(command, context, recordId, locked, seatIds);
     }
 
-    private ReserveOutcome confirm(ReserveCommand command, UUID recordId, List<SeatRow> locked,
-            List<Long> seatIds) {
+    private ReserveOutcome confirm(ReserveCommand command, TxExecutor.TxContext context,
+            UUID recordId, List<SeatRow> locked, List<Long> seatIds) {
         long totalPaise = 0;
         for (SeatRow seat : locked) {
             totalPaise = Math.addExact(totalPaise, seat.pricePaise());
@@ -135,15 +171,29 @@ public class ReservationService {
         String body = json(ReservationResponse.confirmed(reservationId, command.showId(),
                 reservedSeats(locked), totalPaise, createdAt));
         idempotency.complete(recordId, 201, body);
+        context.afterCommit(metrics::reservationConfirmed);
         return new ReserveOutcome.Confirmed(body);
     }
 
-    private ReserveOutcome decline(ReserveCommand command, UUID recordId, ErrorCode code,
-            Map<String, Object> extensions) {
+    private ReserveOutcome decline(ReserveCommand command, TxExecutor.TxContext context,
+            UUID recordId, ErrorCode code, Map<String, Object> extensions) {
         String body = json(Problems.of(code, code.detail(), instanceOf(command), extensions));
         int status = code.status().value();
         idempotency.complete(recordId, status, body);
+        declineReasonOf(code).ifPresent(reason ->
+                context.afterCommit(() -> metrics.reservationDeclined(reason)));
+        log.info("reservation.declined code={} seatCount={}", code.name(), command.seatCount());
         return new ReserveOutcome.Declined(status, body);
+    }
+
+    /** Only the two conflict outcomes are counted as declines; 404 and 422 are not. */
+    private static Optional<ReservationMetrics.DeclineReason> declineReasonOf(ErrorCode code) {
+        return switch (code) {
+            case SEAT_UNAVAILABLE -> Optional.of(ReservationMetrics.DeclineReason.SEAT_UNAVAILABLE);
+            case USER_LIMIT_EXCEEDED ->
+                    Optional.of(ReservationMetrics.DeclineReason.USER_LIMIT_EXCEEDED);
+            default -> Optional.empty();
+        };
     }
 
     private static List<ReservedSeat> reservedSeats(List<SeatRow> locked) {

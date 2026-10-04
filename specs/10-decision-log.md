@@ -296,3 +296,34 @@ Format: Decision · Context · Alternatives · Rationale · Consequences. The st
   `03` §6.2/§7.3, `04` §4/§10, `06` §1/§2/§3.1/§3.2/§3.4/§3.7, `07` §2/§3/§4.1/§6, `08` P0–P3 and the
   risk register, and ADR-008 above. Risk R-5 is closed, and risk R-10 is realised with no impact
   beyond the hand-pinned parent.
+
+## ADR-025: Socket timeouts, because a frozen database never errors
+- **Context:** P5's outage test (OBS-03 / IT-FAIL-02) froze the PostgreSQL container with
+  `docker pause` and `/readyz` never answered — it was still waiting after three minutes. The
+  failure-mode table in `01` §9 assumed a dead database produces "Hikari connection errors", which
+  is only true when the server **closes** its sockets. A frozen server, a blackholed network path,
+  or a hung host answers nothing and closes nothing. Hikari's `connection-timeout` does not help:
+  it bounds acquiring a connection from the pool, not a read on a connection already held, so the
+  readiness query blocks indefinitely. Measured: with no socket timeout `/readyz` never returned;
+  with one it returned 503.
+- **Decision:** set JDBC socket-level timeouts on both pools.
+  - Main pool: `socketTimeout=60` s, `connectTimeout=10` s, `tcpKeepAlive=true`. The socket timeout
+    sits **above** `statement_timeout` (35 s), so a merely slow server still gets to cancel its own
+    query and return a precise `57014` rather than having its connection torn down.
+  - Observability pool: `socketTimeout=3` s, just above its own 2 s `statement_timeout`, so a scrape
+    cannot hang either and the gauge falls back to its last snapshot.
+  - Test profile: `socketTimeout=5` s, so the outage test fails fast instead of waiting out
+    production-sized timeouts.
+- **Alternatives:** rely on OS TCP keepalive alone (default retry windows are minutes to hours, far
+  too slow to protect a request thread); shorten `connection-timeout` instead (wrong lever — it
+  never covers an in-flight read); drop the test and leave the behaviour unverified (the hang is
+  real in production, not an artefact of the test).
+- **Rationale:** without this, an unreachable-but-not-closed database turns every request into an
+  unbounded wait, and `/readyz` stops being able to report the outage at all. Since `/livez` does
+  not touch the database it would keep reporting UP, so no automatic restart would occur either:
+  the service would hang indefinitely with no signal. This strengthens ADR-019 rather than changing
+  it — the host check stays `/livez`, and `/readyz` now actually reports DOWN.
+- **Consequences:** a query that legitimately needs more than 60 s would be severed, which cannot
+  happen here because `statement_timeout` is 35 s. Updated `01` §9, `05` §2, `07` §3/§4.1, and `06`
+  §3.7. The gauge's failure path is now reachable in bounded time, which is what makes
+  `metrics.seat_query_failed` more than a theoretical branch.

@@ -97,7 +97,7 @@ Done when: T2 passes in 5 of 5 runs, with no deadlocks, and AUTH-06/AUTH-07 pass
 Done when: all of the above pass, and reconciliation R1–R6 return no rows for the test's show with
 R7 clean, after each test.
 
-### P5: Observability (≈ 0.75 h)
+### P5: Observability (≈ 0.75 h) — **done**
 
 1. `ReservationMetrics` (the five custom meters in `05` §4.1), registered eagerly and incremented
    after commit.
@@ -106,7 +106,9 @@ R7 clean, after each test.
 3. MDC enrichment (`userRef`, `idemKeyRef`, …) and the log events in `05` §7.
 4. Actuator configuration and probes.
 
-Done when: OBS-01..OBS-10 pass (IT-FAIL-02 / OBS-03 may be tagged `@Tag("slow")`).
+Done when: OBS-01..OBS-12 pass (IT-FAIL-02 / OBS-03 are tagged `@Tag("slow")` and excluded by
+`-DexcludedGroups=slow`). IT-FAIL-02 also produced ADR-025: a frozen database needs a JDBC
+`socketTimeout`, or readiness never answers.
 
 ### P6: Burst script (≈ 1 h; can run in parallel with P4/P5 after P3)
 

@@ -4,6 +4,7 @@ import com.seatres.error.ApiException;
 import com.seatres.error.ErrorCode;
 import com.seatres.error.OutcomeUnknownException;
 import com.seatres.error.ServiceUnavailableException;
+import com.seatres.observability.ReservationMetrics;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
@@ -33,10 +34,13 @@ public class TxExecutor {
 
     private final PlatformTransactionManager transactionManager;
     private final DbErrorClassifier classifier;
+    private final ReservationMetrics metrics;
 
-    public TxExecutor(PlatformTransactionManager transactionManager, DbErrorClassifier classifier) {
+    public TxExecutor(PlatformTransactionManager transactionManager, DbErrorClassifier classifier,
+            ReservationMetrics metrics) {
         this.transactionManager = transactionManager;
         this.classifier = classifier;
+        this.metrics = metrics;
     }
 
     public <T> T execute(Function<TxContext, T> work) {
@@ -103,14 +107,18 @@ public class TxExecutor {
                 yield new ServiceUnavailableException(failure);
             }
             case BUG -> {
-                log.error("invariant.violation check={} sqlstate={}", checkOf(state), state, failure);
+                ReservationMetrics.InvariantCheck check = checkOf(state);
+                metrics.invariantViolation(check);
+                log.error("invariant.violation check={} sqlstate={}", check.label(), state, failure);
                 yield new ApiException(ErrorCode.INTERNAL_ERROR);
             }
         };
     }
 
-    private static String checkOf(String sqlState) {
-        return sqlState != null && sqlState.startsWith("23") ? "db_constraint" : "rowcount_assertion";
+    private static ReservationMetrics.InvariantCheck checkOf(String sqlState) {
+        return sqlState != null && sqlState.startsWith("23")
+                ? ReservationMetrics.InvariantCheck.DB_CONSTRAINT
+                : ReservationMetrics.InvariantCheck.ROWCOUNT_ASSERTION;
     }
 
     private void rollbackQuietly(TransactionStatus status) {

@@ -433,7 +433,8 @@ flowchart LR
 | Failure | Detection | Behaviour | Client action | Recovery |
 |---|---|---|---|---|
 | PostgreSQL down at startup | Flyway/Hikari fail | App fails to start (non-zero exit); the host restarts it | — | Fix the DB; restart |
-| PostgreSQL down at runtime | Hikari connection errors; readiness `db` DOWN | `/readyz` 503; requests → 503 `SERVICE_UNAVAILABLE` (`Retry-After: 1`) | Retry with the same key | Automatic when the DB returns |
+| PostgreSQL stopped at runtime | Sockets close, so Hikari reports connection errors; readiness `db` DOWN | `/readyz` 503; requests → 503 `SERVICE_UNAVAILABLE` (`Retry-After: 1`) | Retry with the same key | Automatic when the DB returns |
+| PostgreSQL frozen, or the network path blackholed | Nothing is closed and nothing answers, so only the JDBC `socketTimeout` (60 s) ends the wait — no pool timeout covers a read on a connection already held (ADR-025) | Requests and `/readyz` wait for the socket timeout, then 503. `/livez` stays 200 throughout, by design | Retry with the same key | Automatic when the DB answers again |
 | Pool saturated (burst) | `hikaricp_connections_pending` > 0 | Requests **wait in line** for a connection (up to `DB_POOL_CONNECTION_TIMEOUT_MS`, 60 s); latency rises, no error (ADR-022) | — | Queue drains as transactions commit |
 | Pool wait > 60 s (last resort) | `SQLTransientConnectionException` | 503 `SERVICE_UNAVAILABLE`. Counts as a burst failure (NFR-1): resize the plan or pool | Back off; retry with the same key | Load subsides |
 | Lock wait > `lock_timeout` (30 s, last resort) | SQLState `55P03` | Rollback, 503. Counts as a burst failure (NFR-1) | Retry with the same key | Investigate the long lock holder |

@@ -15,6 +15,8 @@ import com.seatres.error.ErrorCode;
 import com.seatres.error.OutcomeUnknownException;
 import com.seatres.error.ServiceUnavailableException;
 import com.seatres.error.ShowNotFoundException;
+import com.seatres.observability.ReservationMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.sql.SQLException;
 import java.sql.SQLTransientConnectionException;
 import java.util.List;
@@ -32,6 +34,7 @@ import org.springframework.transaction.support.SimpleTransactionStatus;
 class TxExecutorTest {
 
     private PlatformTransactionManager transactionManager;
+    private ReservationMetrics metrics;
     private TxExecutor executor;
 
     @BeforeEach
@@ -39,7 +42,8 @@ class TxExecutorTest {
         transactionManager = mock(PlatformTransactionManager.class);
         when(transactionManager.getTransaction(any()))
                 .thenAnswer(invocation -> new SimpleTransactionStatus());
-        executor = new TxExecutor(transactionManager, new DbErrorClassifier());
+        metrics = new ReservationMetrics(new SimpleMeterRegistry());
+        executor = new TxExecutor(transactionManager, new DbErrorClassifier(), metrics);
     }
 
     @Test

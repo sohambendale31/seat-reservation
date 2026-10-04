@@ -146,7 +146,7 @@ in both reports `VALIDATION_FAILED` rather than the key error (`01` §4.3).
 | ID | Test | Expected |
 |---|---|---|
 | IT-FAIL-01 | Lock timeout and rollback: a separate JDBC connection (opened outside the pool, so holding a lock cannot starve the app) runs `BEGIN; SELECT ... FROM seats WHERE label='A1' FOR UPDATE` and holds it; then reserve A1 (test `lock_timeout=2s`) | 503 `SERVICE_UNAVAILABLE` with `Retry-After`; no idempotency row and no quota row (full rollback); the seat is still AVAILABLE; after the lock is released, the same key → 201. `SHOW lock_timeout` is asserted by MIG-05. |
-| IT-FAIL-02 | Readiness with the DB paused (`docker pause` through the Testcontainers client; **tagged `@Tag("slow")`**) | `/readyz` 503, `/livez` 200; reserve → 503; after unpausing, `/readyz` 200 |
+| IT-FAIL-02 | Readiness with the DB paused (`docker pause` through the Testcontainers client; **tagged `@Tag("slow")`**, and it takes about a minute because the server waits out its pool timeout) | `/readyz` 503 `DOWN`, `/livez` 200 `UP`; reserve → 503 with `retryable: true`; after unpausing, `/readyz` 200. Requires a JDBC `socketTimeout`: without one the probe never answers at all, which is what ADR-025 records |
 | IT-FAIL-03 | Error bodies | 500/503 bodies contain no SQL, class names, or constraint names |
 
 Scenario 7 (connection drops during commit) is covered by UT-06 (commit-phase failure →
@@ -177,12 +177,14 @@ each test, R1–R7 return 0 rows.
 | OBS-02 | `/readyz` with the DB up | 200 |
 | OBS-03 | `/readyz` with the DB paused (IT-FAIL-02) | 503 |
 | OBS-04 | Counting rules (05 §5) | After 1 confirm, 1 replay of it, 1 seat decline, 1 limit decline, and 1 key reuse, the exact counter deltas are: confirmed +1, declines{seat_unavailable} +1, declines{user_limit_exceeded} +1, replays{201} +1, everything else unchanged |
+| OBS-11 | A replayed decline is not counted twice | Replaying a stored 409 leaves `declines{seat_unavailable}` unchanged and moves only `replays{409}` |
+| OBS-12 | The gauge follows a cancellation | After cancelling, the show's `confirmed` series drops and `available` rises to the full seat count |
 | OBS-05 | Metric names present | Every Prometheus name in 05 §4.1 appears in `/actuator/prometheus` |
 | OBS-06 | No forbidden labels | The scrape output contains no user sub, idempotency key, or reservation id. Show ids appear **only** as the `show_id` label of `seatres_seats`, for at most 20 shows |
 | OBS-07 | Request id | Responses carry `X-Request-Id`; a valid supplied id is echoed; an invalid one is replaced; the problem body's `requestId` matches the header |
-| OBS-08 | Logs | Captured log JSON (Boot `OutputCaptureExtension`) contains `requestId` and no `Authorization`/token substrings, and no admin key (including after AUTH-11/12 calls) |
+| OBS-08 | Logs | Captured log JSON (Boot `OutputCaptureExtension`) contains `requestId` and `userRef` and no `Authorization`/token substrings, no admin key, no JWT secret, and never the raw `sub` (including after AUTH-11/12 calls) |
 | OBS-09 | Seats gauge reconciles per show (ADR-023) | Create a show with n seats, reserve 2, then scrape: `seatres_seats{show_id=S}` shows available n−2, held 0, confirmed 2, exactly matching `GET /shows/S` |
-| OBS-10 | Seats gauge stays live under a saturated main pool | Occupy every main-pool connection (e.g. 10 reserve transactions waiting on a seat locked from another connection), then scrape: it answers within 2 s with current counts, because it uses the observability pool |
+| OBS-10 | Seats gauge stays live under a saturated main pool | Borrow every main-pool connection and hold them, then scrape: it answers promptly with current counts, because it uses the observability pool. Borrowing directly is deterministic, where blocking reserve transactions would depend on timing |
 
 ## 6. Performance and load test plan
 

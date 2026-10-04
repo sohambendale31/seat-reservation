@@ -32,6 +32,19 @@ public class IdempotencyJdbcRepository {
             WHERE id = :id
             """;
 
+    public static final int CLEANUP_BATCH_SIZE = 5_000;
+
+    private static final String DELETE_EXPIRED_BATCH = """
+            DELETE FROM idempotency_records
+            WHERE id IN (
+                SELECT id FROM idempotency_records
+                WHERE expires_at < now()
+                ORDER BY expires_at
+                LIMIT %d
+                FOR UPDATE SKIP LOCKED
+            )
+            """.formatted(CLEANUP_BATCH_SIZE);
+
     private final NamedParameterJdbcTemplate jdbc;
 
     public IdempotencyJdbcRepository(NamedParameterJdbcTemplate jdbc) {
@@ -79,6 +92,12 @@ public class IdempotencyJdbcRepository {
             throw new IllegalStateException(
                     "expected to finalize 1 idempotency record but updated " + updated);
         }
+    }
+
+    /** SKIP LOCKED so a concurrent run or an in-flight claim is stepped over, never waited on. */
+    public int deleteExpiredBatch() {
+        Tx.requireActive();
+        return jdbc.update(DELETE_EXPIRED_BATCH, new MapSqlParameterSource());
     }
 
     public record StoredOutcome(String fingerprint, Integer status, String body) {}
