@@ -110,7 +110,7 @@ Done when: OBS-01..OBS-12 pass (IT-FAIL-02 / OBS-03 are tagged `@Tag("slow")` an
 `-DexcludedGroups=slow`). IT-FAIL-02 also produced ADR-025: a frozen database needs a JDBC
 `socketTimeout`, or readiness never answers.
 
-### P6: Burst script (≈ 1 h; can run in parallel with P4/P5 after P3)
+### P6: Burst script (≈ 1 h; can run in parallel with P4/P5 after P3) — **done**
 
 1. `scripts/BurstTest.java` per `06` §7: tokens from `POST /auth/token`, the 4 scenarios with
    reconciliation (GET counts and the per-show gauge), the 0 × 5xx assertion,
@@ -120,6 +120,13 @@ Done when: OBS-01..OBS-12 pass (IT-FAIL-02 / OBS-03 are tagged `@Tag("slow")` an
 Done when: the local runs (including the 20k `pool-burst`) print `ASSERTIONS: PASS` with 0 × 5xx, and
 their raw output is saved to
 `docs/evidence/local-<date>.txt` (git-tracked; real output only).
+
+The script's own failure path was verified rather than assumed, because a burst script that cannot
+fail proves nothing: restarting PostgreSQL three seconds into a 20k run produced 20 × 503, all of
+which ambiguity resolution recovered to the correct logical outcome, while the 0 × 5xx assertion
+still failed the run with exit 1. That output is kept as
+`docs/evidence/local-fault-injection-<date>.txt`, labelled as a deliberate fault and not a passing
+run.
 
 ### P7: Deployment (≈ 1 h)
 

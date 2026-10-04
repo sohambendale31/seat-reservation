@@ -1,8 +1,9 @@
 # 00 — Overview: Concurrency-Safe Seat Reservation Service
 
-> Status: **Phases P0–P5 implemented** — every endpoint in `02` §1 works, and the metrics, per-show
-> seats gauge, idempotency cleanup and structured logging of `05` are in place. The burst script and
-> the deployment are still pending, so no claim is made here about load results or a deployed URL.
+> Status: **Phases P0–P6 implemented** — every endpoint in `02` §1 works, the observability of `05`
+> is in place, and the burst script runs green locally with 0 × 5xx (raw output in
+> `docs/evidence/`). The deployment is still pending, so no claim is made here about a deployed URL
+> or about hosted load results.
 > Measured numbers belong in `WRITEUP.md`, backed by committed evidence. Implementation decisions
 > that refined this specification are recorded in ADR-024.
 

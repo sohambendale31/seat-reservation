@@ -221,6 +221,9 @@ bound concurrency, and a minimal hand-written JSON field extractor (it reads onl
 `reservationId`, `code`, `status`, `label`, `accessToken`, and the `seatCounts` object). It gets its
 tokens from `POST /auth/token` (ADR-021), so it doesn't need the JWT signing secret.
 
+`--help` prints the option list. An unknown scenario or a flag without a value exits 2 with a usage
+message, so a typo fails immediately rather than part-way through a run.
+
 ### 7.1 Configuration
 
 | Option | Env | Default | Meaning |

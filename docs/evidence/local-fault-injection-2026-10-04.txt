@@ -1,0 +1,35 @@
+Fault injection — NOT a passing run. Kept as proof that the 0 x 5xx assertion has teeth.
+
+PostgreSQL was stopped and restarted 3 seconds into a 20,000-request pool-burst.
+Expected and observed: 503s counted, every one resolved by retrying with the same key,
+the client's logical outcome still matching the server exactly, and the run FAILING.
+
+  date    2026-10-04T05:35:32Z
+  command java scripts/BurstTest.java --scenario pool-burst --requests 20000 --users 1000 --seats 1000 --concurrency 300
+  exit    1
+
+target=http://localhost:8080 runId=20261004T053452-f983 concurrency=300
+
+=== scenario: pool-burst  show=7fb3c314-7034-40fa-8b26-07921037ec09  users=1000  concurrency=300 ===
+HTTP outcomes (first attempt)
+  201 Created ........................... 652
+  409 SEAT_UNAVAILABLE .................. 14755
+  409 USER_LIMIT_EXCEEDED ............... 4573
+  409 IDEMPOTENCY_KEY_REUSED ............ 0
+  other 4xx ............................. 0   {}
+  5xx ................................... 20   {503 SERVICE_UNAVAILABLE=20}
+  timeouts .............................. 0
+  transport errors ...................... 0
+  replayed (Idempotent-Replayed: true) .. 0
+After ambiguity resolution
+  resolved ............................... 20   unresolved ... 0
+Logical outcome
+  distinct reservations (client) ........ 652
+  seats confirmed (client) .............. 999
+  seats confirmed (server GET) .......... 999
+Latency (ms, first attempt, all responses)  p50=71  p95=146  p99=4556  max=4795
+Wall time .............................. 9.4 s   achieved rate 2122 req/s
+Reconcile: total=1000 available=1 held=0 confirmed=999  invariant=OK
+  FAILED: no first-attempt 5xx ({503 SERVICE_UNAVAILABLE=20})
+ASSERTIONS: FAIL
+SUMMARY {"scenario":"pool-burst","runId":"20261004T053452-f983","baseUrl":"http://localhost:8080","show":"7fb3c314-7034-40fa-8b26-07921037ec09","users":1000,"concurrency":300,"requests":20000,"created":652,"seatUnavailable":14755,"userLimitExceeded":4573,"keyReused":0,"other4xx":0,"serverErrors":20,"timeouts":0,"transportErrors":0,"replayed":0,"resolved":20,"unresolved":0,"logicalReservations":652,"clientSeats":999,"serverSeats":999,"p50Ms":71,"p95Ms":146,"p99Ms":4556,"maxMs":4795,"wallSeconds":9.4,"ratePerSecond":2122,"total":1000,"available":1,"held":0,"confirmed":999,"pass":false}

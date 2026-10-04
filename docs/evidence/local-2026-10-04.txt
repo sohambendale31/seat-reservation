@@ -1,0 +1,136 @@
+Local burst evidence — raw BurstTest.java output, unedited.
+
+Environment
+  date         2026-10-04T05:33:49Z
+  host         Darwin arm64, 10 CPUs, 24 GiB RAM (laptop, app+DB in Docker on the same machine)
+  java         openjdk version "21.0.12.1" 2026-08-18
+  docker       Docker version 29.8.1, build 4a63305
+  postgres     PostgreSQL 16.15 on aarch64-unknown-linux-musl, compiled by 
+  commit       7a211a5 plus the uncommitted P6 script
+  app config   DB_POOL_MAX_SIZE=20 (default), profile local
+  caveat       the load generator and the service share this machine, so these rates are a
+               lower bound on the service and are not a capacity measurement
+==========================================================================
+L-1  java scripts/BurstTest.java --scenario all --base-url http://localhost:8080
+==========================================================================
+target=http://localhost:8080 runId=20261004T053715-b35e concurrency=200
+
+=== scenario: hot-seat  show=25da1cb2-bf34-4167-9849-c3f9870609a7  users=500  concurrency=200 ===
+HTTP outcomes (first attempt)
+  201 Created ........................... 1
+  409 SEAT_UNAVAILABLE .................. 499
+  409 USER_LIMIT_EXCEEDED ............... 0
+  409 IDEMPOTENCY_KEY_REUSED ............ 0
+  other 4xx ............................. 0   {}
+  5xx ................................... 0   {}
+  timeouts .............................. 0
+  transport errors ...................... 0
+  replayed (Idempotent-Replayed: true) .. 0
+After ambiguity resolution
+  resolved ............................... 0   unresolved ... 0
+Logical outcome
+  distinct reservations (client) ........ 1
+  seats confirmed (client) .............. 1
+  seats confirmed (server GET) .......... 1
+Latency (ms, first attempt, all responses)  p50=104  p95=145  p99=217  max=293
+Wall time .............................. 0.3 s   achieved rate 1645 req/s
+Reconcile: total=10 available=9 held=0 confirmed=1  invariant=OK
+ASSERTIONS: PASS
+SUMMARY {"scenario":"hot-seat","runId":"20261004T053715-b35e","baseUrl":"http://localhost:8080","show":"25da1cb2-bf34-4167-9849-c3f9870609a7","users":500,"concurrency":200,"requests":500,"created":1,"seatUnavailable":499,"userLimitExceeded":0,"keyReused":0,"other4xx":0,"serverErrors":0,"timeouts":0,"transportErrors":0,"replayed":0,"resolved":0,"unresolved":0,"logicalReservations":1,"clientSeats":1,"serverSeats":1,"p50Ms":104,"p95Ms":145,"p99Ms":217,"maxMs":293,"wallSeconds":0.3,"ratePerSecond":1645,"total":10,"available":9,"held":0,"confirmed":1,"pass":true}
+
+=== scenario: pool-burst  show=5a605a3e-6043-4d89-ae27-18ad18d72ddd  users=2000  concurrency=200 ===
+HTTP outcomes (first attempt)
+  201 Created ........................... 641
+  409 SEAT_UNAVAILABLE .................. 16997
+  409 USER_LIMIT_EXCEEDED ............... 2362
+  409 IDEMPOTENCY_KEY_REUSED ............ 0
+  other 4xx ............................. 0   {}
+  5xx ................................... 0   {}
+  timeouts .............................. 0
+  transport errors ...................... 0
+  replayed (Idempotent-Replayed: true) .. 0
+After ambiguity resolution
+  resolved ............................... 0   unresolved ... 0
+Logical outcome
+  distinct reservations (client) ........ 641
+  seats confirmed (client) .............. 999
+  seats confirmed (server GET) .......... 999
+Latency (ms, first attempt, all responses)  p50=45  p95=87  p99=120  max=224
+Wall time .............................. 4.8 s   achieved rate 4202 req/s
+Reconcile: total=1000 available=1 held=0 confirmed=999  invariant=OK
+ASSERTIONS: PASS
+SUMMARY {"scenario":"pool-burst","runId":"20261004T053715-b35e","baseUrl":"http://localhost:8080","show":"5a605a3e-6043-4d89-ae27-18ad18d72ddd","users":2000,"concurrency":200,"requests":20000,"created":641,"seatUnavailable":16997,"userLimitExceeded":2362,"keyReused":0,"other4xx":0,"serverErrors":0,"timeouts":0,"transportErrors":0,"replayed":0,"resolved":0,"unresolved":0,"logicalReservations":641,"clientSeats":999,"serverSeats":999,"p50Ms":45,"p95Ms":87,"p99Ms":120,"maxMs":224,"wallSeconds":4.8,"ratePerSecond":4202,"total":1000,"available":1,"held":0,"confirmed":999,"pass":true}
+
+=== scenario: same-key  show=c8a27329-755f-4d5e-8b64-f2e2475537e9  users=1  concurrency=200 ===
+HTTP outcomes (first attempt)
+  201 Created ........................... 60
+  409 SEAT_UNAVAILABLE .................. 0
+  409 USER_LIMIT_EXCEEDED ............... 0
+  409 IDEMPOTENCY_KEY_REUSED ............ 10
+  other 4xx ............................. 0   {}
+  5xx ................................... 0   {}
+  timeouts .............................. 0
+  transport errors ...................... 0
+  replayed (Idempotent-Replayed: true) .. 58
+After ambiguity resolution
+  resolved ............................... 0   unresolved ... 0
+Logical outcome
+  distinct reservations (client) ........ 2
+  seats confirmed (client) .............. 3
+  seats confirmed (server GET) .......... 3
+Latency (ms, first attempt, all responses)  p50=12  p95=12  p99=12  max=12
+Wall time .............................. 0.0 s   achieved rate 3889 req/s
+Reconcile: total=10 available=7 held=0 confirmed=3  invariant=OK
+ASSERTIONS: PASS
+SUMMARY {"scenario":"same-key","runId":"20261004T053715-b35e","baseUrl":"http://localhost:8080","show":"c8a27329-755f-4d5e-8b64-f2e2475537e9","users":1,"concurrency":200,"requests":70,"created":60,"seatUnavailable":0,"userLimitExceeded":0,"keyReused":10,"other4xx":0,"serverErrors":0,"timeouts":0,"transportErrors":0,"replayed":58,"resolved":0,"unresolved":0,"logicalReservations":2,"clientSeats":3,"serverSeats":3,"p50Ms":12,"p95Ms":12,"p99Ms":12,"maxMs":12,"wallSeconds":0.0,"ratePerSecond":3889,"total":10,"available":7,"held":0,"confirmed":3,"pass":true}
+
+=== scenario: user-limit  show=a64dce03-44bb-4011-be15-732c6cf4f021  users=1  concurrency=200 ===
+HTTP outcomes (first attempt)
+  201 Created ........................... 4
+  409 SEAT_UNAVAILABLE .................. 0
+  409 USER_LIMIT_EXCEEDED ............... 6
+  409 IDEMPOTENCY_KEY_REUSED ............ 0
+  other 4xx ............................. 0   {}
+  5xx ................................... 0   {}
+  timeouts .............................. 0
+  transport errors ...................... 0
+  replayed (Idempotent-Replayed: true) .. 0
+After ambiguity resolution
+  resolved ............................... 0   unresolved ... 0
+Logical outcome
+  distinct reservations (client) ........ 4
+  seats confirmed (client) .............. 4
+  seats confirmed (server GET) .......... 4
+Latency (ms, first attempt, all responses)  p50=8  p95=10  p99=10  max=10
+Wall time .............................. 0.0 s   achieved rate 1000 req/s
+Reconcile: total=10 available=6 held=0 confirmed=4  invariant=OK
+ASSERTIONS: PASS
+SUMMARY {"scenario":"user-limit","runId":"20261004T053715-b35e","baseUrl":"http://localhost:8080","show":"a64dce03-44bb-4011-be15-732c6cf4f021","users":1,"concurrency":200,"requests":10,"created":4,"seatUnavailable":0,"userLimitExceeded":6,"keyReused":0,"other4xx":0,"serverErrors":0,"timeouts":0,"transportErrors":0,"replayed":0,"resolved":0,"unresolved":0,"logicalReservations":4,"clientSeats":4,"serverSeats":4,"p50Ms":8,"p95Ms":10,"p99Ms":10,"maxMs":10,"wallSeconds":0.0,"ratePerSecond":1000,"total":10,"available":6,"held":0,"confirmed":4,"pass":true}
+
+==========================================================================
+L-2  java scripts/BurstTest.java --scenario pool-burst --requests 20000 --concurrency 500
+==========================================================================
+target=http://localhost:8080 runId=20261004T053722-a652 concurrency=500
+
+=== scenario: pool-burst  show=fc823233-f87e-4d0a-82f8-3ba964d960ef  users=2000  concurrency=500 ===
+HTTP outcomes (first attempt)
+  201 Created ........................... 650
+  409 SEAT_UNAVAILABLE .................. 17059
+  409 USER_LIMIT_EXCEEDED ............... 2291
+  409 IDEMPOTENCY_KEY_REUSED ............ 0
+  other 4xx ............................. 0   {}
+  5xx ................................... 0   {}
+  timeouts .............................. 0
+  transport errors ...................... 0
+  replayed (Idempotent-Replayed: true) .. 0
+After ambiguity resolution
+  resolved ............................... 0   unresolved ... 0
+Logical outcome
+  distinct reservations (client) ........ 650
+  seats confirmed (client) .............. 997
+  seats confirmed (server GET) .......... 997
+Latency (ms, first attempt, all responses)  p50=106  p95=255  p99=353  max=712
+Wall time .............................. 4.9 s   achieved rate 4068 req/s
+Reconcile: total=1000 available=3 held=0 confirmed=997  invariant=OK
+ASSERTIONS: PASS
+SUMMARY {"scenario":"pool-burst","runId":"20261004T053722-a652","baseUrl":"http://localhost:8080","show":"fc823233-f87e-4d0a-82f8-3ba964d960ef","users":2000,"concurrency":500,"requests":20000,"created":650,"seatUnavailable":17059,"userLimitExceeded":2291,"keyReused":0,"other4xx":0,"serverErrors":0,"timeouts":0,"transportErrors":0,"replayed":0,"resolved":0,"unresolved":0,"logicalReservations":650,"clientSeats":997,"serverSeats":997,"p50Ms":106,"p95Ms":255,"p99Ms":353,"maxMs":712,"wallSeconds":4.9,"ratePerSecond":4068,"total":1000,"available":3,"held":0,"confirmed":997,"pass":true}
