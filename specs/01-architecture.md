@@ -14,6 +14,7 @@
 | Security | Spring Security 6 + `spring-boot-starter-oauth2-resource-server` (Nimbus JOSE, HS256) | No extra JWT library |
 | Metrics | Micrometer + `micrometer-registry-prometheus` | Via Actuator |
 | Logging | Logback + Spring Boot built-in structured logging (`logging.structured.format.console=ecs`, available since Boot 3.4) | No extra encoder dependency |
+| API docs | `springdoc-openapi-starter-webmvc-ui` **2.9.1** | The only dependency outside the Boot BOM. 2.x is the line for Boot 3.x; 3.x targets Boot 4 (ADR-027) |
 | Testing | JUnit 5, Spring Boot Test, Spring Security Test, Testcontainers (`postgresql`, `junit-jupiter`), `spring-boot-testcontainers` (`@ServiceConnection`) | Docker required for `verify` |
 | Build | Maven **3.9.16** via Maven Wrapper (`./mvnw`, `distributionType=only-script`, so no wrapper jar is committed) | Surefire runs unit tests (`*Test`); Failsafe runs integration tests (`*IT`) |
 | Container | Docker multi-stage build: `eclipse-temurin:21-jdk` → `eclipse-temurin:21-jre` | Pinned by tag and digest (§1.1) |
@@ -36,7 +37,8 @@ Spring Initializr no longer offers a 3.x line, so the parent is pinned by hand r
 1. Keep the parent version explicit and in the 3.5.x line.
 2. Let the Spring Boot BOM manage **all** library versions (Spring, Hibernate, HikariCP, PostgreSQL
    JDBC, Flyway, Micrometer, Jackson, Logback, JUnit, Testcontainers). Do not override a BOM-managed
-   version unless a CVE requires it, and record any override in the decision log.
+   version unless a CVE requires it, and record any override in the decision log. One dependency is
+   not BOM-managed and so is pinned explicitly: springdoc-openapi **2.9.1** (ADR-027).
 3. No version ranges anywhere, and Docker base images stay pinned by digest.
 4. Record the resolved versions (`./mvnw -q dependency:tree`) in `WRITEUP.md`.
 
@@ -62,6 +64,7 @@ Spring Initializr no longer offers a 3.x line, so the parent is pinned by hand r
   <dependency><groupId>org.flywaydb</groupId><artifactId>flyway-core</artifactId></dependency>
   <dependency><groupId>org.flywaydb</groupId><artifactId>flyway-database-postgresql</artifactId></dependency>
   <dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId><scope>runtime</scope></dependency>
+  <dependency><groupId>org.springdoc</groupId><artifactId>springdoc-openapi-starter-webmvc-ui</artifactId><version>2.9.1</version></dependency>
 
   <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
   <dependency><groupId>org.springframework.security</groupId><artifactId>spring-security-test</artifactId><scope>test</scope></dependency>
@@ -86,6 +89,7 @@ src/main/java/com/seatres/
 │   ├── ObservabilityDataSourceConfig.java  # second, tiny Hikari pool (2 connections) used only by SeatGaugeCollector (ADR-023)
 │   ├── JacksonConfig.java            # strict ObjectMapper: unknown fields, float→int and scalar coercion rejected
 │   ├── SchedulingConfig.java         # @EnableScheduling (idempotency cleanup)
+│   ├── OpenApiConfig.java            # OpenAPI document, bearer scheme, and / -> Swagger UI (ADR-027)
 │   └── StartupChecks.java            # fail fast: JWT secret and admin key ≥ 32 bytes and different
 │                                      # from each other; prod refuses their dev defaults; retention ≥ PT24H
 ├── security/

@@ -1,5 +1,6 @@
 package com.seatres.web.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -11,12 +12,16 @@ import java.util.List;
 
 @ValidCreateShow
 public record CreateShowRequest(
+        @Schema(example = "Evening Show - Screen 1")
         @NotNull
         String name,
 
+        @Schema(example = "2026-12-01T19:30:00+05:30",
+                description = "When the show starts, with its UTC offset.")
         @NotNull
         OffsetDateTime startsAt,
 
+        @Schema(example = "4", description = "Most seats one person may hold. Defaults to 4.")
         @Min(value = 1, message = "must be between 1 and 10")
         @Max(value = 10, message = "must be between 1 and 10")
         Integer perUserLimit,

@@ -17,10 +17,15 @@ integer **paise** (`long`) of INR.
 | GET | `/readyz` | Public | — | 200 / 503 |
 | GET | `/actuator/health` | Public (status only, no details) | — | 200 / 503 |
 | GET | `/actuator/prometheus` | Public | — | 200 |
+| GET | `/` | Public | — | 302 to the Swagger UI |
+| GET | `/swagger-ui.html`, `/swagger-ui/**` | Public | — | 200 (interactive docs) |
+| GET | `/v3/api-docs`, `/v3/api-docs/**` | Public | — | 200 (OpenAPI document) |
 
 Any other path → 404 `NOT_FOUND` (problem JSON) for a caller with a valid token. Without a valid token
 it's 401 `UNAUTHENTICATED`: security rules run before routing, and unmatched paths require
-authentication (fail-closed, so a new endpoint is never public by accident). Wrong method → 405
+authentication (fail-closed, so a new endpoint is never public by accident). The public paths above
+are the **complete** exception list; the docs paths were added by ADR-027 and `OpenApiIT` asserts
+that nothing else became public with them. Wrong method → 405
 `METHOD_NOT_ALLOWED` for an authenticated caller; without a valid token it is 401, for the same
 reason (security runs before routing). The one public method is `POST /auth/token`, so e.g.
 `GET /auth/token` is 401 anonymously and 405 with a token.

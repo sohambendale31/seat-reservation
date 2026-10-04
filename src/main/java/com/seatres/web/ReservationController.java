@@ -9,6 +9,12 @@ import com.seatres.service.RequestFingerprinter;
 import com.seatres.service.ReservationService;
 import com.seatres.web.dto.ReservationResponse;
 import com.seatres.web.dto.ReserveRequest;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.UUID;
@@ -24,6 +30,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
+@Tag(name = "Reservations")
 public class ReservationController {
 
     static final String KEY_HEADER = "Idempotency-Key";
@@ -42,8 +49,18 @@ public class ReservationController {
         this.fingerprinter = fingerprinter;
     }
 
+    @Operation(summary = "Book seats for a show",
+            description = "Books 1-10 seats at once: you get all of them or none. Send a fresh "
+                    + "Idempotency-Key per booking attempt; if the call fails or times out, "
+                    + "repeat it with the same key and you will get the original answer back "
+                    + "rather than a second booking.")
+    @ApiResponse(responseCode = "201", description = "The seats are confirmed",
+            content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(implementation = ReservationResponse.class)))
     @PostMapping(path = "/shows/{showId}/reserve", consumes = MediaType.APPLICATION_JSON_VALUE)
     ResponseEntity<String> reserve(@PathVariable UUID showId,
+            @Parameter(required = true, description = "Unique per logical attempt; a UUID is ideal",
+                    example = "3f2b1c9e-7a4d-4f51-9a1f-0f3f3c1c2d10")
             @RequestHeader(name = KEY_HEADER, required = false) String idempotencyKey,
             @Valid @RequestBody ReserveRequest request,
             @AuthenticationPrincipal Jwt jwt) {
@@ -57,6 +74,9 @@ public class ReservationController {
     }
 
     /** No consumes and no body parameter, so any body and any content type are ignored. */
+    @Operation(summary = "Cancel a booking and release its seats",
+            description = "Frees exactly the seats in this booking, so anyone can take them again. "
+                    + "Cancelling twice is harmless. You can only cancel your own booking.")
     @PostMapping("/reservations/{reservationId}/cancel")
     ReservationResponse cancel(@PathVariable UUID reservationId,
             @AuthenticationPrincipal Jwt jwt) {

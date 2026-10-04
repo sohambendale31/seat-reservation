@@ -106,8 +106,15 @@ secret is never shared. `java scripts/MintToken.java` still works offline if you
 
 ## API
 
+Open the deployed URL (or `localhost:8080`) in a browser: `/` redirects to an interactive Swagger UI
+that lists every endpoint. Get a token from `POST /auth/token`, click **Authorize**, paste it, and
+the rest of the API is callable from the page. Creating a show needs an ADMIN token, which requires
+the admin key.
+
 | Method | Path | Role |
 |---|---|---|
+| GET | `/` → `/swagger-ui.html` | public (interactive docs) |
+| GET | `/v3/api-docs` | public (OpenAPI document) |
 | POST | `/auth/token` | public (ADMIN role needs `X-Admin-Key`) |
 | POST | `/shows` | ADMIN |
 | GET | `/shows/{id}` | USER/ADMIN |

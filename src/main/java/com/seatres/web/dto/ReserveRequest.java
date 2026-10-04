@@ -1,5 +1,7 @@
 package com.seatres.web.dto;
 
+import io.swagger.v3.oas.annotations.media.ArraySchema;
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -7,6 +9,9 @@ import java.util.Comparator;
 import java.util.List;
 
 public record ReserveRequest(
+        @ArraySchema(arraySchema = @Schema(
+                description = "The seats you want, by label. You get all of them or none."),
+                schema = @Schema(example = "A1"))
         @NotNull
         @Size(min = 1, max = 10, message = "must contain between 1 and 10 seat labels")
         @UniqueLabels

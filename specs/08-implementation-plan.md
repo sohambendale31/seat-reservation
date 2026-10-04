@@ -134,7 +134,7 @@ run.
    Set the env vars, including `APP_AUTH_ADMIN_KEY`, and commit `railway.json` with the four
    overridden defaults (ADR-026): `drainingSeconds: 25`, `overlapSeconds: 0`,
    `healthcheckPath: /readyz`, and Serverless disabled.
-2. Deploy, then run items 3, 5–11 and 14 of the checklist in `07` §11.
+2. Deploy, then run items 3, 5–11 and 14–18 of the checklist in `07` §11.
 3. Run the burst against the deployed URL: `--scenario all --concurrency 200` (L-3), then the 20k
    `pool-burst` at concurrency 300 (L-4, mandatory). Save the output to
    `docs/evidence/deployed-<date>.txt`. If L-4 shows any 5xx, resize the plan or pool (or adopt the

@@ -27,6 +27,10 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/auth/token").permitAll()
                         .requestMatchers("/livez", "/readyz", "/actuator/health",
                                 "/actuator/health/**", "/actuator/prometheus").permitAll()
+                        // The only paths exempted from the fail-closed rule below: the API docs and
+                        // the redirect that takes the bare URL to them.
+                        .requestMatchers(HttpMethod.GET, "/", "/swagger-ui.html", "/swagger-ui/**",
+                                "/v3/api-docs", "/v3/api-docs/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/shows").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.GET, "/shows/*").hasAnyRole("USER", "ADMIN")
                         .requestMatchers(HttpMethod.POST, "/shows/*/reserve").hasRole("USER")

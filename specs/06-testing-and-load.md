@@ -83,6 +83,8 @@ Rules:
 | AUTH-12 | `POST /auth/token` with `roles:["ADMIN"]`: no `X-Admin-Key` / a wrong key / the correct key | 403 `FORBIDDEN` and no token / 403 / 200, and that token can `POST /shows` |
 | AUTH-13 | `POST /auth/token` with an invalid `sub` (65 chars, or containing a space) or an unknown role | 400 `VALIDATION_FAILED` |
 | AUTH-14 | `GET /auth/token` (only `POST` is public) without a token / with a valid token | 401 / 405, because security runs before routing (`02` §1) |
+| AUTH-15 | The OpenAPI document and the Swagger UI without a token (ADR-027) | 200 for `/v3/api-docs`, `/v3/api-docs/swagger-config` and `/swagger-ui/index.html`; `GET /` is a 302 to the UI; the document lists all five endpoints, marks `POST /auth/token` as needing no bearer token, documents `Idempotency-Key` on reserve, declares the `ReservationResponse` schema for the 201, and contains no secret |
+| AUTH-16 | Opening the docs opened nothing else | `/nope`, `/actuator/env`, `GET /shows/{id}` and `POST /shows` are all still 401 without a token |
 
 ### 3.3 Shows
 

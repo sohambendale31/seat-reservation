@@ -1,4 +1,8 @@
 package com.seatres.web.dto;
 
-public record ReservedSeat(String label, long pricePaise) {
+import io.swagger.v3.oas.annotations.media.Schema;
+
+public record ReservedSeat(
+        @Schema(example = "A1") String label,
+        @Schema(example = "25000", description = "Price in paise.") long pricePaise) {
 }

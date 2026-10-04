@@ -385,3 +385,35 @@ Format: Decision · Context · Alternatives · Rationale · Consequences. The st
   before 2025-10-16 have IPv6-only private networking, where a JVM may need
   `-Djava.net.preferIPv6Addresses=true`; newer environments resolve `.railway.internal` to both
   families, so a project created now is unaffected.
+
+## ADR-027: Serve OpenAPI docs, and redirect the bare URL to them
+- **Context:** the deployed service answered `GET /` with `401 UNAUTHENTICATED`. That is ADR-018
+  working as designed — unmatched paths fail closed — but it means an evaluator who opens the URL
+  sees only an error and has no way to discover the API. They would have to read `02` to learn that
+  `POST /auth/token` exists before they could call anything.
+- **Decision:** add `springdoc-openapi-starter-webmvc-ui` and serve interactive docs. `GET /`
+  redirects to the Swagger UI. Four path groups become public: `/`, `/swagger-ui.html`,
+  `/swagger-ui/**` and `/v3/api-docs/**`. Everything else keeps the fail-closed default. The
+  document declares a bearer scheme so **Authorize** works in the browser, marks `POST /auth/token`
+  as needing no token, documents `Idempotency-Key` as a required header on reserve, and declares the
+  real `ReservationResponse` schema for the 201 — necessary because that handler returns a
+  pre-serialized `String` so replays are byte-identical, which would otherwise document as `string`.
+  The version is pinned to `2.9.1`: springdoc 2.x is the line for Spring Boot 3.x, while 3.x targets
+  Spring Boot 4. This is the one dependency not managed by the Boot BOM (`01` §1.1 requires
+  recording such an override).
+- **Alternatives:** a static landing page (no way to exercise the API); redirecting `/` to the README
+  on the Git host (leaves the live service undiscoverable); leaving the 401 and relying on `02`
+  (works, but every evaluator pays a reading tax before the first call); generating the document by
+  hand (drifts from the code immediately).
+- **Rationale:** the service exists to be exercised by someone who did not write it, and a usable
+  front door costs four public GET paths. Nothing new is *exposed*: the docs describe endpoints that
+  were already reachable, and every one of them still requires a verified token.
+- **Consequences:** the demo identity provider becomes more discoverable, which does not change
+  threat T-12 — anyone could already obtain a USER token — but makes it more likely to be noticed, so
+  the UI description states plainly that it is a demo and the data is throwaway. The admin key is
+  **not** published in the document; the description tells the reader to ask the operator for it, and
+  a test asserts no secret appears in the document. The fail-closed rule now has a written exception
+  list, and `OpenApiIT` guards it: `/nope`, `/actuator/env`, `GET /shows/{id}` and `POST /shows` must
+  all still answer 401 anonymously. In a real production deployment the docs would be restricted at
+  the network level alongside `/actuator/prometheus` (`05` §3). Updated `00` §10, `01` §1/§2, `02`
+  §1/§3, `07` §11, `08` P7 and the README.
