@@ -2,6 +2,10 @@
 server:
   port: ${PORT:8080}
   shutdown: graceful
+  # Behind a TLS-terminating proxy the app sees plain http, so absolute URLs it generates
+  # (the / redirect, and the server URL the API docs advertise) would come out as http and a
+  # browser would block them as mixed content. This makes it honour X-Forwarded-Proto.
+  forward-headers-strategy: framework
   tomcat:
     max-connections: 25000               # hold a burst open while it queues
     accept-count: 1000

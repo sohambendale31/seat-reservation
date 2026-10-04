@@ -76,6 +76,7 @@ shows and is read at scrape time over a 2-connection observability pool (ADR-023
 server:
   port: ${PORT:8080}
   shutdown: graceful
+  forward-headers-strategy: framework   # honour X-Forwarded-Proto behind the host's TLS proxy
   tomcat:
     max-connections: 25000               # hold the evaluator's burst open while it queues (ADR-022)
     accept-count: 1000
@@ -440,7 +441,9 @@ Idempotency records don't reference shows or reservations; they expire through r
 | 12 | Graceful shutdown | Redeploy during light load: no 500s; at most retryable 503s. Confirms `drainingSeconds` is in effect |
 | 15 | Serverless is off | `railway.json` sets `sleepApplication: false`; confirm behaviourally by leaving the service idle for > 5 minutes, then sending one request: it must not be a 502 |
 | 16 | Deploy healthcheck | The deploy log shows the healthcheck on `/readyz` passing before the release goes live |
-| 17 | The front door works | `https://<host>/` redirects to the Swagger UI, which loads and lists all five endpoints; **Authorize** with a token from `POST /auth/token` makes them callable (ADR-027) |
+| 17 | The front door works | `https://<host>/` redirects to the Swagger UI over **https**, which loads and lists all five endpoints; **Authorize** with a token from `POST /auth/token` makes them callable (ADR-027) |
+| 19 | The proxy's scheme survives | `curl -i https://<host>/` returns a `Location` starting `https://`, and `/v3/api-docs` advertises an `https` server URL. If either says `http`, the browser blocks every **Try it out** call as mixed content and `server.forward-headers-strategy` is not in effect |
+| 20 | The deployment uses real secrets | The committed dev admin key is refused by `POST /auth/token` (403), and a token signed with the committed dev JWT secret is refused (401) |
 | 18 | The docs opened nothing else | `GET /nope`, `GET /actuator/env` and `GET /shows/<uuid>` without a token are all still 401 |
 | 13 | No secrets in Git | `git grep -nE 'APP_AUTH_(JWT_SECRET|ADMIN_KEY)=\S|BEGIN PRIVATE KEY'` shows only placeholders |
 | 14 | Token endpoint | `POST /auth/token` without `X-Admin-Key` for role `ADMIN` → 403; with the key → 200 |
